@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "public": true,
+  "outputDirectory": "public",
+  "routes": [
+    { "src": "/chat", "dest": "/api/chat" },
+    { "src": "/clear", "dest": "/api/clear" },
+    { "src": "/(.*)", "dest": "/public/$1" }
+  ]
+}
