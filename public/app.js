@@ -1,52 +1,118 @@
 // ═══════════════════════════════════════════════
-//  CHAT STORE  –  persisted in localStorage
+//  EMOJI PICKER
 // ═══════════════════════════════════════════════
-const STORE_KEY = 'voiceChats';
+const EMOJIS = [
+  '😀','😂','😍','🤔','😎','🥳','😴','🤯',
+  '👍','👎','❤️','🔥','✨','💡','🎯','⚡',
+  '📁','📂','📝','📌','📎','🔖','🗂️','🗃️',
+  '🌍','🌎','🌏','🏠','🏢','🏗️','🎓','🎒',
+  '💬','💭','🗣️','📢','📣','🔔','📡','🛰️',
+  '🤖','👾','🎮','🕹️','💻','📱','⌨️','🖥️',
+  '🍕','🍔','☕','🍵','🍺','🎂','🍎','🥑',
+  '🚀','✈️','🚗','🚌','🛸','🌊','⛰️','🌋',
+  '🎵','🎶','🎸','🥁','🎹','🎤','🎧','🎼',
+  '📚','📖','✏️','🖊️','📐','🔬','🔭','🧪',
+  '💰','💳','🏦','📈','📉','💹','🪙','💎',
+  '🌱','🌿','🌳','🌸','🌺','🍀','🍁','🌻',
+];
 
-function loadStore() {
-  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; }
+const emojiPicker  = document.getElementById('emojiPicker');
+const emojiGrid    = document.getElementById('emojiGrid');
+let emojiCallback  = null;
+
+// Build emoji grid once
+EMOJIS.forEach(em => {
+  const btn = document.createElement('button');
+  btn.textContent = em;
+  btn.addEventListener('click', () => {
+    if (emojiCallback) emojiCallback(em);
+    closeEmojiPicker();
+  });
+  emojiGrid.appendChild(btn);
+});
+
+function openEmojiPicker(anchorEl, cb) {
+  emojiCallback = cb;
+  const rect = anchorEl.getBoundingClientRect();
+  // Position above the anchor
+  let top = rect.top - 8 - 290; // picker height ~290
+  let left = rect.left;
+  if (top < 8) top = rect.bottom + 8;
+  if (left + 260 > window.innerWidth) left = window.innerWidth - 268;
+  emojiPicker.style.top  = top + 'px';
+  emojiPicker.style.left = left + 'px';
+  emojiPicker.classList.add('open');
 }
 
-function saveStore(store) {
-  localStorage.setItem(STORE_KEY, JSON.stringify(store));
+function closeEmojiPicker() {
+  emojiPicker.classList.remove('open');
+  emojiCallback = null;
 }
 
-function createChat(name) {
+document.addEventListener('pointerdown', (e) => {
+  if (emojiPicker.classList.contains('open') && !emojiPicker.contains(e.target)) {
+    closeEmojiPicker();
+  }
+});
+
+// ═══════════════════════════════════════════════
+//  DATA STORE  –  persisted in localStorage
+// ═══════════════════════════════════════════════
+const STORE_KEY   = 'voiceChats_v2';
+const FOLDER_KEY  = 'voiceFolders_v2';
+
+function loadStore()   { try { return JSON.parse(localStorage.getItem(STORE_KEY))  || {}; } catch { return {}; } }
+function saveStore(s)  { localStorage.setItem(STORE_KEY, JSON.stringify(s)); }
+function loadFolders() { try { return JSON.parse(localStorage.getItem(FOLDER_KEY)) || {}; } catch { return {}; } }
+function saveFolders(f){ localStorage.setItem(FOLDER_KEY, JSON.stringify(f)); }
+
+// ── Chats ──
+function createChat(name, folderId) {
   const id = 'chat_' + Date.now();
   const store = loadStore();
-  store[id] = { id, name: name || 'Chat ' + new Date().toLocaleDateString('es', {day:'2-digit', month:'short'}), systemPrompt: '', messages: [] };
+  store[id] = {
+    id,
+    emoji: '💬',
+    name: name || 'Chat ' + new Date().toLocaleDateString('es', {day:'2-digit', month:'short'}),
+    systemPrompt: '',
+    folderId: folderId || null,
+    messages: []
+  };
   saveStore(store);
   return store[id];
 }
 
-function getChat(id) {
-  return loadStore()[id] || null;
-}
-
-function updateChat(id, patch) {
-  const store = loadStore();
-  if (!store[id]) return;
-  Object.assign(store[id], patch);
-  saveStore(store);
-}
-
-function deleteChat(id) {
-  const store = loadStore();
-  delete store[id];
-  saveStore(store);
-}
+function getChat(id)            { return loadStore()[id] || null; }
+function updateChat(id, patch)  { const s = loadStore(); if (!s[id]) return; Object.assign(s[id], patch); saveStore(s); }
+function deleteChat(id)         { const s = loadStore(); delete s[id]; saveStore(s); }
 
 function allChats() {
-  const store = loadStore();
-  return Object.values(store).sort((a, b) => {
+  return Object.values(loadStore()).sort((a, b) => {
     const aLast = a.messages.at(-1)?.ts || parseInt(a.id.split('_')[1]);
     const bLast = b.messages.at(-1)?.ts || parseInt(b.id.split('_')[1]);
     return bLast - aLast;
   });
 }
 
+// ── Folders ──
+function createFolder(name, emoji, systemPrompt) {
+  const id = 'folder_' + Date.now();
+  const folders = loadFolders();
+  folders[id] = { id, emoji: emoji || '📁', name: name || 'Nueva carpeta', systemPrompt: systemPrompt || '' };
+  saveFolders(folders);
+  return folders[id];
+}
+function getFolder(id)            { return loadFolders()[id] || null; }
+function updateFolder(id, patch)  { const f = loadFolders(); if (!f[id]) return; Object.assign(f[id], patch); saveFolders(f); }
+function deleteFolder(id)         { const f = loadFolders(); delete f[id]; saveFolders(f); }
+function allFolders()             { return Object.values(loadFolders()); }
+
+// ── Track which folders are open ──
+const openFolders = new Set(JSON.parse(localStorage.getItem('openFolders') || '[]'));
+function saveOpenFolders() { localStorage.setItem('openFolders', JSON.stringify([...openFolders])); }
+
 // ═══════════════════════════════════════════════
-//  INIT: ensure we have at least one chat
+//  INIT
 // ═══════════════════════════════════════════════
 let activeChatId = localStorage.getItem('activeChatId');
 if (!activeChatId || !getChat(activeChatId)) {
@@ -58,38 +124,47 @@ if (!activeChatId || !getChat(activeChatId)) {
 // ═══════════════════════════════════════════════
 //  DOM REFS
 // ═══════════════════════════════════════════════
-const sidebar       = document.getElementById('sidebar');
-const toggleSidebar = document.getElementById('toggleSidebar');
-const chatListEl    = document.getElementById('chatList');
-const newChatBtn    = document.getElementById('newChatBtn');
-const chatTitleEl   = document.getElementById('chatTitle');
-const messagesEl    = document.getElementById('messages');
-const textInput     = document.getElementById('textInput');
-const sendTextBtn   = document.getElementById('sendText');
-const recordBtn     = document.getElementById('recordBtn');
-const micWrap       = document.getElementById('micWrap');
-const btnTimer      = document.getElementById('btnTimer');
-const lockHint      = document.getElementById('lockHint');
-const recOverlay    = document.getElementById('recOverlay');
-const recTimerEl    = document.getElementById('recTimer');
-const recCancelZone = document.getElementById('recCancelZone');
-const settingsBtn   = document.getElementById('settingsBtn');
-const settingsModal = document.getElementById('settingsModal');
-const closeSettings = document.getElementById('closeSettings');
-const systemPromptEl= document.getElementById('systemPrompt');
-const savePromptBtn = document.getElementById('saveSystemPrompt');
-const clearHistBtn  = document.getElementById('clearHistory');
-const iconMic       = recordBtn.querySelector('.icon-mic');
-const iconStop      = recordBtn.querySelector('.icon-stop');
+const sidebar         = document.getElementById('sidebar');
+const toggleSidebar   = document.getElementById('toggleSidebar');
+const chatListEl      = document.getElementById('chatList');
+const newChatBtn      = document.getElementById('newChatBtn');
+const newFolderBtn    = document.getElementById('newFolderBtn');
+const chatTitleEl     = document.getElementById('chatTitle');
+const messagesEl      = document.getElementById('messages');
+const textInput       = document.getElementById('textInput');
+const sendTextBtn     = document.getElementById('sendText');
+const recordBtn       = document.getElementById('recordBtn');
+const micWrap         = document.getElementById('micWrap');
+const btnTimer        = document.getElementById('btnTimer');
+const lockHint        = document.getElementById('lockHint');
+const recOverlay      = document.getElementById('recOverlay');
+const recTimerEl      = document.getElementById('recTimer');
+const recCancelBtn    = document.getElementById('recCancelBtn');
+const recSendBtn      = document.getElementById('recSendBtn');
+const settingsBtn     = document.getElementById('settingsBtn');
+const settingsModal   = document.getElementById('settingsModal');
+const closeSettings   = document.getElementById('closeSettings');
+const chatNameInput   = document.getElementById('chatNameInput');
+const chatEmojiBtn    = document.getElementById('chatEmojiBtn');
+const systemPromptEl  = document.getElementById('systemPrompt');
+const savePromptBtn   = document.getElementById('saveSystemPrompt');
+const clearHistBtn    = document.getElementById('clearHistory');
+const folderModal     = document.getElementById('folderModal');
+const folderModalTitle= document.getElementById('folderModalTitle');
+const closeFolderModal= document.getElementById('closeFolderModal');
+const folderNameInput = document.getElementById('folderNameInput');
+const folderEmojiBtn  = document.getElementById('folderEmojiBtn');
+const folderPromptEl  = document.getElementById('folderPrompt');
+const saveFolderBtn   = document.getElementById('saveFolderBtn');
+const deleteFolderBtn = document.getElementById('deleteFolderBtn');
+const iconMic         = recordBtn.querySelector('.icon-mic');
+const iconStop        = recordBtn.querySelector('.icon-stop');
 
 // ═══════════════════════════════════════════════
 //  SIDEBAR
 // ═══════════════════════════════════════════════
-toggleSidebar.addEventListener('click', () => {
-  sidebar.classList.toggle('open');
-});
+toggleSidebar.addEventListener('click', () => sidebar.classList.toggle('open'));
 
-// close sidebar on outside click (mobile)
 document.addEventListener('click', (e) => {
   if (sidebar.classList.contains('open') &&
       !sidebar.contains(e.target) &&
@@ -104,41 +179,107 @@ newChatBtn.addEventListener('click', () => {
   sidebar.classList.remove('open');
 });
 
+// ── Render sidebar ──
 function renderChatList() {
   chatListEl.innerHTML = '';
-  allChats().forEach(chat => {
-    const item = document.createElement('div');
-    item.className = 'chat-item' + (chat.id === activeChatId ? ' active' : '');
-    item.dataset.id = chat.id;
+  const folders = allFolders();
+  const chats   = allChats();
 
-    const nameEl = document.createElement('span');
-    nameEl.className = 'chat-item-name';
-    nameEl.textContent = chat.name;
+  // 1. Render folders
+  folders.forEach(folder => {
+    const folderChats = chats.filter(c => c.folderId === folder.id);
+    const isOpen = openFolders.has(folder.id);
 
-    const delBtn = document.createElement('button');
-    delBtn.className = 'chat-item-del';
-    delBtn.title = 'Eliminar';
-    delBtn.textContent = '✕';
-    delBtn.addEventListener('click', (e) => {
+    // Folder row
+    const row = document.createElement('div');
+    row.className = 'folder-row' + (isOpen ? ' open' : '');
+    row.innerHTML = `
+      <span class="folder-chevron">▶</span>
+      <span class="folder-emoji">${folder.emoji || '📁'}</span>
+      <span class="folder-name">${escHtml(folder.name)}</span>
+      <button class="folder-edit" title="Editar carpeta">✎</button>
+    `;
+    row.querySelector('.folder-edit').addEventListener('click', (e) => {
       e.stopPropagation();
-      if (allChats().length === 1) { showToast('No puedes eliminar el único chat'); return; }
-      deleteChat(chat.id);
-      if (activeChatId === chat.id) {
-        const remaining = allChats();
-        switchChat(remaining[0].id);
-      } else {
-        renderChatList();
-      }
+      openFolderModal(folder.id);
+    });
+    row.addEventListener('click', (e) => {
+      if (e.target.classList.contains('folder-edit')) return;
+      openFolders.has(folder.id) ? openFolders.delete(folder.id) : openFolders.add(folder.id);
+      saveOpenFolders();
+      renderChatList();
+    });
+    chatListEl.appendChild(row);
+
+    // Children container
+    const children = document.createElement('div');
+    children.className = 'folder-children' + (isOpen ? ' open' : '');
+
+    folderChats.forEach(chat => {
+      children.appendChild(makeChatItem(chat));
     });
 
-    item.appendChild(nameEl);
-    item.appendChild(delBtn);
-    item.addEventListener('click', () => {
+    // Add-chat button
+    const addBtn = document.createElement('button');
+    addBtn.className = 'folder-add-chat';
+    addBtn.innerHTML = `<span>＋</span> Nuevo chat`;
+    addBtn.addEventListener('click', () => {
+      const chat = createChat(null, folder.id);
+      // Inherit folder's system prompt
+      const fp = getFolder(folder.id)?.systemPrompt || '';
+      if (fp) updateChat(chat.id, { systemPrompt: fp });
+      openFolders.add(folder.id);
+      saveOpenFolders();
       switchChat(chat.id);
       sidebar.classList.remove('open');
     });
+    children.appendChild(addBtn);
+    chatListEl.appendChild(children);
+  });
+
+  // 2. Root chats (no folder)
+  const rootChats = chats.filter(c => !c.folderId);
+  rootChats.forEach(chat => {
+    const item = makeChatItem(chat);
+    item.classList.add('chat-item-root');
     chatListEl.appendChild(item);
   });
+}
+
+function makeChatItem(chat) {
+  const item = document.createElement('div');
+  item.className = 'chat-item' + (chat.id === activeChatId ? ' active' : '');
+  item.dataset.id = chat.id;
+
+  const emojiEl = document.createElement('span');
+  emojiEl.className = 'chat-emoji';
+  emojiEl.textContent = chat.emoji || '💬';
+
+  const nameEl = document.createElement('span');
+  nameEl.className = 'chat-item-name';
+  nameEl.textContent = chat.name;
+
+  const delBtn = document.createElement('button');
+  delBtn.className = 'chat-item-del';
+  delBtn.title = 'Eliminar';
+  delBtn.textContent = '✕';
+  delBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (allChats().length === 1) { showToast('No puedes eliminar el único chat'); return; }
+    deleteChat(chat.id);
+    if (activeChatId === chat.id) {
+      switchChat(allChats()[0].id);
+    } else {
+      renderChatList();
+    }
+  });
+
+  item.append(emojiEl, nameEl, delBtn);
+  item.addEventListener('click', () => {
+    switchChat(chat.id);
+    sidebar.classList.remove('open');
+  });
+  return item;
 }
 
 function switchChat(id) {
@@ -147,8 +288,16 @@ function switchChat(id) {
   renderChatList();
   renderMessages();
   const chat = getChat(id);
-  chatTitleEl.textContent = chat.name;
-  systemPromptEl.value = chat.systemPrompt || '';
+  if (chat) {
+    chatTitleEl.textContent = (chat.emoji !== '💬' ? chat.emoji + ' ' : '') + chat.name;
+    systemPromptEl.value  = chat.systemPrompt || '';
+    chatNameInput.value   = chat.name;
+    chatEmojiBtn.textContent = chat.emoji || '💬';
+  }
+}
+
+function escHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 // ═══════════════════════════════════════════════
@@ -177,17 +326,14 @@ function renderMessages() {
 }
 
 function addMessageDOM(role, text, isAudio = false, audioDur = null) {
-  // Remove empty state
   const es = messagesEl.querySelector('.empty-state');
   if (es) es.remove();
 
-  const wrap = document.createElement('div');
+  const wrap   = document.createElement('div');
   wrap.className = `message ${role}`;
-
-  const label = document.createElement('div');
+  const label  = document.createElement('div');
   label.className = 'message-label';
   label.textContent = role === 'user' ? 'Tú' : 'Gemini';
-
   const bubble = document.createElement('div');
   bubble.className = 'message-bubble';
 
@@ -216,9 +362,9 @@ function addMessageDOM(role, text, isAudio = false, audioDur = null) {
 }
 
 function addThinkingDOM() {
-  const wrap = document.createElement('div');
+  const wrap   = document.createElement('div');
   wrap.className = 'message model thinking';
-  const label = document.createElement('div');
+  const label  = document.createElement('div');
   label.className = 'message-label';
   label.textContent = 'Gemini';
   const bubble = document.createElement('div');
@@ -231,9 +377,7 @@ function addThinkingDOM() {
   return wrap;
 }
 
-function scrollToBottom() {
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
+function scrollToBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
 
 // ═══════════════════════════════════════════════
 //  SEND MESSAGE
@@ -243,10 +387,9 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
   const chat = getChat(activeChatId);
   if (!chat) return;
 
-  // Store & display user message
   const userMsg = { role: 'user', ts: Date.now() };
   if (audioBase64) {
-    userMsg.isAudio = true;
+    userMsg.isAudio  = true;
     userMsg.audioDur = audioDur || null;
   } else {
     userMsg.text = text;
@@ -257,25 +400,23 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
   updateChat(activeChatId, { messages: chat.messages });
   addMessageDOM('user', userMsg.text || null, userMsg.isAudio || false, userMsg.audioDur || null);
 
-  // Update chat name from first user text
-  if (chat.messages.filter(m=>m.role==='user').length === 1 && text) {
+  // Auto-name from first user text
+  if (chat.messages.filter(m => m.role === 'user').length === 1 && text) {
     const newName = text.slice(0, 30) + (text.length > 30 ? '…' : '');
     updateChat(activeChatId, { name: newName });
-    chatTitleEl.textContent = newName;
+    chatNameInput.value   = newName;
+    chatTitleEl.textContent = (chat.emoji !== '💬' ? chat.emoji + ' ' : '') + newName;
     renderChatList();
   }
 
   const thinking = addThinkingDOM();
 
   try {
-    const body = {
-      sessionId: activeChatId,
-      systemPrompt: chat.systemPrompt || ''
-    };
+    const body = { sessionId: activeChatId, systemPrompt: chat.systemPrompt || '' };
     if (text) body.message = text;
     if (audioBase64) { body.audioBase64 = audioBase64; body.audioMimeType = audioMimeType; }
 
-    const res = await fetch('/chat', {
+    const res  = await fetch('/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -298,29 +439,42 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
 }
 
 // ═══════════════════════════════════════════════
-//  SETTINGS MODAL
+//  SETTINGS MODAL (chat config)
 // ═══════════════════════════════════════════════
 settingsBtn.addEventListener('click', () => {
   const chat = getChat(activeChatId);
-  systemPromptEl.value = chat?.systemPrompt || '';
+  systemPromptEl.value     = chat?.systemPrompt || '';
+  chatNameInput.value      = chat?.name || '';
+  chatEmojiBtn.textContent = chat?.emoji || '💬';
   settingsModal.classList.add('open');
 });
 closeSettings.addEventListener('click', () => settingsModal.classList.remove('open'));
 settingsModal.addEventListener('click', (e) => { if (e.target === settingsModal) settingsModal.classList.remove('open'); });
 
+chatEmojiBtn.addEventListener('click', () => {
+  openEmojiPicker(chatEmojiBtn, (em) => { chatEmojiBtn.textContent = em; });
+});
+
 savePromptBtn.addEventListener('click', () => {
   const chat = getChat(activeChatId);
   if (!chat) return;
-  updateChat(activeChatId, { systemPrompt: systemPromptEl.value });
+  const newName  = chatNameInput.value.trim() || chat.name;
+  const newEmoji = chatEmojiBtn.textContent;
+  updateChat(activeChatId, {
+    name:         newName,
+    emoji:        newEmoji,
+    systemPrompt: systemPromptEl.value
+  });
+  chatTitleEl.textContent = (newEmoji !== '💬' ? newEmoji + ' ' : '') + newName;
+  renderChatList();
   settingsModal.classList.remove('open');
-  showToast('System prompt guardado', false);
+  showToast('Configuración guardada', false);
 });
 
 clearHistBtn.addEventListener('click', async () => {
   const chat = getChat(activeChatId);
   if (!chat) return;
   updateChat(activeChatId, { messages: [] });
-  // also clear server-side session
   await fetch('/clear', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -329,6 +483,65 @@ clearHistBtn.addEventListener('click', async () => {
   settingsModal.classList.remove('open');
   renderMessages();
   showToast('Conversación limpiada', false);
+});
+
+// ═══════════════════════════════════════════════
+//  FOLDER MODAL
+// ═══════════════════════════════════════════════
+let editingFolderId = null;
+
+function openFolderModal(folderId) {
+  editingFolderId = folderId || null;
+  if (folderId) {
+    const f = getFolder(folderId);
+    folderModalTitle.textContent   = 'Editar carpeta';
+    folderNameInput.value          = f.name;
+    folderEmojiBtn.textContent     = f.emoji || '📁';
+    folderPromptEl.value           = f.systemPrompt || '';
+    deleteFolderBtn.style.display  = '';
+  } else {
+    folderModalTitle.textContent   = 'Nueva carpeta';
+    folderNameInput.value          = '';
+    folderEmojiBtn.textContent     = '📁';
+    folderPromptEl.value           = '';
+    deleteFolderBtn.style.display  = 'none';
+  }
+  folderModal.classList.add('open');
+}
+
+newFolderBtn.addEventListener('click', () => openFolderModal(null));
+closeFolderModal.addEventListener('click', () => folderModal.classList.remove('open'));
+folderModal.addEventListener('click', (e) => { if (e.target === folderModal) folderModal.classList.remove('open'); });
+
+folderEmojiBtn.addEventListener('click', () => {
+  openEmojiPicker(folderEmojiBtn, (em) => { folderEmojiBtn.textContent = em; });
+});
+
+saveFolderBtn.addEventListener('click', () => {
+  const name   = folderNameInput.value.trim() || 'Carpeta';
+  const emoji  = folderEmojiBtn.textContent;
+  const prompt = folderPromptEl.value;
+
+  if (editingFolderId) {
+    updateFolder(editingFolderId, { name, emoji, systemPrompt: prompt });
+  } else {
+    createFolder(name, emoji, prompt);
+  }
+  folderModal.classList.remove('open');
+  renderChatList();
+  showToast('Carpeta guardada', false);
+});
+
+deleteFolderBtn.addEventListener('click', () => {
+  if (!editingFolderId) return;
+  // Move all chats in this folder to root
+  allChats().filter(c => c.folderId === editingFolderId).forEach(c => updateChat(c.id, { folderId: null }));
+  deleteFolder(editingFolderId);
+  openFolders.delete(editingFolderId);
+  saveOpenFolders();
+  folderModal.classList.remove('open');
+  renderChatList();
+  showToast('Carpeta eliminada', false);
 });
 
 // ═══════════════════════════════════════════════
@@ -345,22 +558,31 @@ sendTextBtn.addEventListener('click', () => sendMessage(textInput.value.trim()))
 
 // ═══════════════════════════════════════════════
 //  RECORDING LOGIC
+//
 //  Modes:
-//   1. Hold (pointerdown → pointerup within HOLD_MS = hold detected) → send on release
-//   2. Toggle (quick tap → starts recording, shows overlay; tap Send or Cancel to finish)
+//   1. HOLD  — pointerdown → recording starts after HOLD_MS,
+//              pointerup sends; drag up to lock.
+//   2. TOGGLE — quick tap → starts recording, shows overlay.
+//              In overlay: "Enviar" button sends, "Cancelar" discards.
+//              Pressing mic button again in toggle mode also sends.
 // ═══════════════════════════════════════════════
-const HOLD_MS = 300;   // threshold: hold > 300ms = hold mode; tap = toggle mode
+const HOLD_MS       = 300;
+const LOCK_THRESHOLD = -60; // px upward to lock from hold → toggle
 
-let mediaRecorder = null;
-let audioChunks   = [];
-let isRecording   = false;
-let recordingMode = null;   // 'hold' | 'toggle'
+let mediaRecorder      = null;
+let audioChunks        = [];
+let isRecording        = false;
+let recordingMode      = null;   // 'hold' | 'toggle'
 let recordingCancelled = false;
-let timerInterval = null;
-let recSeconds    = 0;
-let holdTimer     = null;
-let pointerDownY  = 0;
-let LOCK_THRESHOLD = -60;  // px upward to lock (toggle mode)
+let timerInterval      = null;
+let recSeconds         = 0;
+let holdTimer          = null;
+let pointerDownY       = 0;
+
+// Stored audio for "review before send" in toggle mode
+let pendingBlob        = null;
+let pendingMime        = null;
+let pendingDur         = 0;
 
 function formatTime(s) {
   const m = Math.floor(s / 60);
@@ -373,10 +595,7 @@ function startTimer() {
   timerInterval = setInterval(() => { recSeconds++; updateTimerUI(); }, 1000);
 }
 
-function stopTimer() {
-  clearInterval(timerInterval);
-  timerInterval = null;
-}
+function stopTimer() { clearInterval(timerInterval); timerInterval = null; }
 
 function updateTimerUI() {
   const t = formatTime(recSeconds);
@@ -387,16 +606,16 @@ function updateTimerUI() {
 async function beginRecording(mode) {
   if (isRecording) return;
   recordingCancelled = false;
+  pendingBlob = null;
   recordingMode = mode;
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
     if (recordingCancelled) { stream.getTracks().forEach(t => t.stop()); return; }
 
     audioChunks = [];
-    const mimeType = getSupportedMimeType();
-    mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+    const mimeType   = getSupportedMimeType();
+    mediaRecorder    = new MediaRecorder(stream, mimeType ? { mimeType } : {});
 
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
 
@@ -404,16 +623,26 @@ async function beginRecording(mode) {
       stream.getTracks().forEach(t => t.stop());
       const dur = recSeconds;
       stopTimer();
-      setRecordingUI(false);
 
-      if (recordingCancelled || audioChunks.length === 0) return;
+      if (recordingCancelled || audioChunks.length === 0) {
+        setRecordingUI(false);
+        return;
+      }
 
       const actualMime = mediaRecorder.mimeType || mimeType || 'audio/webm';
-      const blob = new Blob(audioChunks, { type: actualMime });
-      const base64 = await blobToBase64(blob);
-      const cleanB64 = base64.includes(',') ? base64.split(',')[1] : base64;
-      const cleanMime = actualMime.split(';')[0];
-      await sendMessage(null, cleanB64, cleanMime, dur);
+      pendingBlob = new Blob(audioChunks, { type: actualMime });
+      pendingMime = actualMime;
+      pendingDur  = dur;
+
+      // In hold mode: send immediately
+      // In toggle mode: show overlay with Send/Cancel buttons (already visible)
+      if (recordingMode === 'hold') {
+        setRecordingUI(false);
+        await doSendAudio();
+      } else {
+        // toggle: recording stopped, show review state in overlay
+        setOverlayReviewState(dur);
+      }
     };
 
     mediaRecorder.start();
@@ -427,11 +656,33 @@ async function beginRecording(mode) {
   }
 }
 
+async function doSendAudio() {
+  if (!pendingBlob) return;
+  const blob  = pendingBlob;
+  const mime  = pendingMime;
+  const dur   = pendingDur;
+  pendingBlob = null;
+  setRecordingUI(false);
+  const base64 = await blobToBase64(blob);
+  const cleanB64  = base64.includes(',') ? base64.split(',')[1] : base64;
+  const cleanMime = mime.split(';')[0];
+  await sendMessage(null, cleanB64, cleanMime, dur);
+}
+
 function stopRecording(cancel = false) {
-  if (!isRecording) { recordingCancelled = true; return; }
+  if (!isRecording) { recordingCancelled = cancel; return; }
   recordingCancelled = cancel;
   mediaRecorder.stop();
   isRecording = false;
+}
+
+// Overlay shows "recording" state or "review" state (after stop in toggle)
+function setOverlayReviewState(dur) {
+  // Recording already stopped; show Send/Cancel in overlay, hide waveform animation
+  recTimerEl.textContent = formatTime(dur);
+  // Swap hint text
+  recOverlay.querySelector('.rec-hint').textContent = 'Grabación lista — ¿Enviar?';
+  // Keep overlay visible, buttons already there
 }
 
 function setRecordingUI(on, mode) {
@@ -439,11 +690,14 @@ function setRecordingUI(on, mode) {
     recordBtn.classList.add('recording');
     iconMic.style.display = 'none';
     iconStop.style.display = '';
+    // Reset hint text
+    if (recOverlay.querySelector('.rec-hint')) {
+      recOverlay.querySelector('.rec-hint').textContent = 'Grabando — bloqueado';
+    }
     if (mode === 'toggle') {
       recOverlay.classList.add('visible');
       btnTimer.style.display = 'none';
     } else {
-      // hold mode: show inline timer
       btnTimer.style.display = '';
       lockHint.classList.add('visible');
     }
@@ -454,6 +708,7 @@ function setRecordingUI(on, mode) {
     recOverlay.classList.remove('visible');
     btnTimer.style.display = 'none';
     lockHint.classList.remove('visible');
+    pendingBlob = null;
   }
 }
 
@@ -467,7 +722,7 @@ function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onloadend = () => resolve(r.result);
-    r.onerror = reject;
+    r.onerror   = reject;
     r.readAsDataURL(blob);
   });
 }
@@ -475,9 +730,14 @@ function blobToBase64(blob) {
 // ── Pointer events on mic button ──
 recordBtn.addEventListener('pointerdown', (e) => {
   e.preventDefault();
+  // If already in toggle mode and recording → second tap = stop recording (goes to review)
   if (isRecording && recordingMode === 'toggle') {
-    // Second tap in toggle mode = send
     stopRecording(false);
+    return;
+  }
+  // If in review state (pendingBlob exists, overlay visible) → send
+  if (!isRecording && pendingBlob && recOverlay.classList.contains('visible')) {
+    doSendAudio();
     return;
   }
   if (isRecording) return;
@@ -485,7 +745,6 @@ recordBtn.addEventListener('pointerdown', (e) => {
   recordBtn.setPointerCapture(e.pointerId);
   pointerDownY = e.clientY;
 
-  // Start a hold timer; if pointer lifts before HOLD_MS → it's a tap (toggle)
   holdTimer = setTimeout(() => {
     holdTimer = null;
     beginRecording('hold');
@@ -496,7 +755,6 @@ recordBtn.addEventListener('pointermove', (e) => {
   if (!holdTimer && isRecording && recordingMode === 'hold') {
     const dy = e.clientY - pointerDownY;
     if (dy < LOCK_THRESHOLD) {
-      // Dragged far enough up → switch to toggle/lock mode
       recordingMode = 'toggle';
       setRecordingUI(true, 'toggle');
     }
@@ -506,18 +764,14 @@ recordBtn.addEventListener('pointermove', (e) => {
 recordBtn.addEventListener('pointerup', (e) => {
   e.preventDefault();
   if (holdTimer) {
-    // Released before hold threshold → toggle mode
     clearTimeout(holdTimer);
     holdTimer = null;
-    if (!isRecording) {
-      beginRecording('toggle');
-    }
+    if (!isRecording) beginRecording('toggle');
     return;
   }
   if (isRecording && recordingMode === 'hold') {
     stopRecording(false);
   }
-  // toggle mode: do nothing on pointerup (wait for next tap)
 });
 
 recordBtn.addEventListener('pointercancel', () => {
@@ -525,18 +779,34 @@ recordBtn.addEventListener('pointercancel', () => {
   if (isRecording && recordingMode === 'hold') stopRecording(false);
 });
 
-// Prevent stray click
 recordBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); });
 
-// ── Cancel zone in overlay ──
-recCancelZone.addEventListener('click', () => { stopRecording(true); });
-recCancelZone.addEventListener('pointerdown', () => recCancelZone.classList.add('active'));
-recCancelZone.addEventListener('pointerup', () => recCancelZone.classList.remove('active'));
+// ── Overlay buttons ──
+recSendBtn.addEventListener('click', async () => {
+  if (isRecording) {
+    // Stop recording first, then send (onstop will call doSendAudio via review state)
+    stopRecording(false);
+    // Give onstop a tick to run, then send
+    setTimeout(async () => { await doSendAudio(); }, 150);
+  } else {
+    await doSendAudio();
+  }
+});
 
-// ── Keyboard: Escape cancels toggle recording ──
+recCancelBtn.addEventListener('click', () => {
+  stopRecording(true);
+  pendingBlob = null;
+  setRecordingUI(false);
+});
+
+// ── Keyboard shortcuts ──
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && isRecording && recordingMode === 'toggle') {
-    stopRecording(true);
+  if (e.key === 'Escape') {
+    if (recOverlay.classList.contains('visible')) {
+      stopRecording(true);
+      pendingBlob = null;
+      setRecordingUI(false);
+    }
   }
 });
 
