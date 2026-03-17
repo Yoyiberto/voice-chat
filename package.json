@@ -1,11 +1,5 @@
 {
   "name": "voice-chat",
   "version": "1.0.0",
-  "description": "Voice chat app using Gemini multimodal API",
-  "scripts": {
-    "dev": "node server.js"
-  },
-  "devDependencies": {
-    "express": "^4.18.2"
-  }
+  "description": "Voice chat app using Gemini multimodal API"
 }

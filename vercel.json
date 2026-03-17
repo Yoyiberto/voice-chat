@@ -1,9 +1,11 @@
 {
   "version": 2,
+  "buildCommand": "",
+  "outputDirectory": "public",
   "routes": [
     { "src": "/chat", "dest": "/api/chat" },
     { "src": "/clear", "dest": "/api/clear" },
     { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/public/$1" }
+    { "src": "/(.*)", "dest": "/$1" }
   ]
 }

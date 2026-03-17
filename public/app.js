@@ -67,14 +67,25 @@ function loadFolders() { try { return JSON.parse(localStorage.getItem(FOLDER_KEY
 function saveFolders(f){ localStorage.setItem(FOLDER_KEY, JSON.stringify(f)); }
 
 // ── Chats ──
+const DEFAULT_SYSTEM_PROMPT = 'Responde máximo en 200 palabras y termina con tres preguntas cortas para saber hacia dónde dirigir la conversación.';
+
+function chatDefaultName() {
+  const now = new Date();
+  const date = now.toLocaleDateString('es', { day: '2-digit', month: 'short' });
+  const time = now.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit', hour12: false });
+  return 'Chat ' + date + ' ' + time;
+}
+
 function createChat(name, folderId) {
   const id = 'chat_' + Date.now();
   const store = loadStore();
+  // If inside a folder, inherit folder's system prompt; otherwise use default
+  const folderPrompt = folderId ? (getFolder(folderId)?.systemPrompt || '') : '';
   store[id] = {
     id,
     emoji: '💬',
-    name: name || 'Chat ' + new Date().toLocaleDateString('es', {day:'2-digit', month:'short'}),
-    systemPrompt: '',
+    name: name || chatDefaultName(),
+    systemPrompt: folderPrompt || DEFAULT_SYSTEM_PROMPT,
     folderId: folderId || null,
     messages: []
   };
@@ -142,6 +153,7 @@ const recTimerEl      = document.getElementById('recTimer');
 const recCancelBtn    = document.getElementById('recCancelBtn');
 const recSendBtn      = document.getElementById('recSendBtn');
 const settingsBtn     = document.getElementById('settingsBtn');
+const ttsAutoBtn      = document.getElementById('ttsAutoBtn');
 const settingsModal   = document.getElementById('settingsModal');
 const closeSettings   = document.getElementById('closeSettings');
 const chatNameInput   = document.getElementById('chatNameInput');
@@ -283,6 +295,7 @@ function makeChatItem(chat) {
 }
 
 function switchChat(id) {
+  ttsStop();
   activeChatId = id;
   localStorage.setItem('activeChatId', id);
   renderChatList();
@@ -331,9 +344,27 @@ function addMessageDOM(role, text, isAudio = false, audioDur = null) {
 
   const wrap   = document.createElement('div');
   wrap.className = `message ${role}`;
+
+  // Label row: "Gemini" + TTS button for model messages
+  const labelRow = document.createElement('div');
+  labelRow.className = 'message-label-row';
   const label  = document.createElement('div');
   label.className = 'message-label';
   label.textContent = role === 'user' ? 'Tú' : 'Gemini';
+  labelRow.appendChild(label);
+
+  if (role === 'model' && text) {
+    const ttsBtn = document.createElement('button');
+    ttsBtn.className = 'btn-tts';
+    ttsBtn.title = 'Escuchar';
+    ttsBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="13" height="13">
+      <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
+    </svg>`;
+    ttsBtn.dataset.speaking = 'false';
+    ttsBtn.addEventListener('click', () => ttsToggle(ttsBtn, text));
+    labelRow.appendChild(ttsBtn);
+  }
+
   const bubble = document.createElement('div');
   bubble.className = 'message-bubble';
 
@@ -355,7 +386,7 @@ function addMessageDOM(role, text, isAudio = false, audioDur = null) {
     bubble.textContent = text || '';
   }
 
-  wrap.appendChild(label);
+  wrap.appendChild(labelRow);
   wrap.appendChild(bubble);
   messagesEl.appendChild(wrap);
   return wrap;
@@ -429,8 +460,13 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
     const modelMsg = { role: 'model', text: data.reply, ts: Date.now() };
     chat.messages.push(modelMsg);
     updateChat(activeChatId, { messages: chat.messages });
-    addMessageDOM('model', data.reply);
+    const msgEl = addMessageDOM('model', data.reply);
     scrollToBottom();
+    // Auto-TTS if enabled
+    if (autoTts && data.reply) {
+      const ttsBtn = msgEl?.querySelector('.btn-tts');
+      if (ttsBtn) ttsToggle(ttsBtn, data.reply);
+    }
 
   } catch (err) {
     thinking.remove();
@@ -809,6 +845,76 @@ document.addEventListener('keydown', (e) => {
     }
   }
 });
+
+// ═══════════════════════════════════════════════
+//  TEXT-TO-SPEECH  (Web Speech API — free, native)
+// ═══════════════════════════════════════════════
+const tts = window.speechSynthesis;
+let activeTtsBtn = null;
+
+function ttsToggle(btn, text) {
+  // If something is already speaking, stop it
+  if (tts.speaking) {
+    tts.cancel();
+    if (activeTtsBtn) {
+      activeTtsBtn.classList.remove('speaking');
+      activeTtsBtn.dataset.speaking = 'false';
+      activeTtsBtn.title = 'Escuchar';
+    }
+    // If we clicked the same button that was speaking, just stop
+    if (activeTtsBtn === btn) {
+      activeTtsBtn = null;
+      return;
+    }
+  }
+
+  // Start speaking
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.rate  = 1.1;   // slightly faster = more natural for quick responses
+  utt.pitch = 1;
+  utt.lang  = 'es-ES';  // Spanish default; browser will pick best voice available
+
+  utt.onstart = () => {
+    activeTtsBtn = btn;
+    btn.classList.add('speaking');
+    btn.dataset.speaking = 'true';
+    btn.title = 'Detener';
+    btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="13" height="13">
+      <path d="M6 6h12v12H6z"/>
+    </svg>`;
+  };
+  utt.onend = utt.onerror = () => {
+    btn.classList.remove('speaking');
+    btn.dataset.speaking = 'false';
+    btn.title = 'Escuchar';
+    btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="13" height="13">
+      <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
+    </svg>`;
+    if (activeTtsBtn === btn) activeTtsBtn = null;
+  };
+
+  tts.speak(utt);
+}
+
+// ─── auto-TTS toggle ───
+let autoTts = localStorage.getItem('autoTts') === 'true';
+function updateTtsAutoBtn() {
+  ttsAutoBtn.classList.toggle('active', autoTts);
+  ttsAutoBtn.title = autoTts ? 'Auto-voz activada (clic para desactivar)' : 'Reproducir respuestas automáticamente';
+}
+updateTtsAutoBtn();
+ttsAutoBtn.addEventListener('click', () => {
+  autoTts = !autoTts;
+  localStorage.setItem('autoTts', autoTts);
+  updateTtsAutoBtn();
+  if (!autoTts && tts.speaking) tts.cancel();
+});
+
+// Stop TTS when switching chats
+function ttsStop() {
+  if (tts.speaking) tts.cancel();
+  activeTtsBtn = null;
+}
 
 // ═══════════════════════════════════════════════
 //  TOAST

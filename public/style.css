@@ -135,13 +135,14 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   display: flex; align-items: center; gap: 10px;
   padding: 0 14px; flex-shrink: 0;
 }
-.btn-toggle-sidebar, .btn-settings {
+.btn-toggle-sidebar, .btn-settings, .btn-tts-auto {
   background: none; border: none; color: var(--text-muted);
   cursor: pointer; padding: 6px; border-radius: 6px;
   display: flex; align-items: center; transition: color .12s, background .12s;
   flex-shrink: 0;
 }
-.btn-toggle-sidebar:hover, .btn-settings:hover { color: var(--text); background: var(--surface2); }
+.btn-toggle-sidebar:hover, .btn-settings:hover, .btn-tts-auto:hover { color: var(--text); background: var(--surface2); }
+.btn-tts-auto.active { color: var(--accent); }
 .topbar-title { flex: 1; font-size: 15px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── Modal ── */
@@ -234,7 +235,17 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .message { display: flex; flex-direction: column; max-width: 82%; gap: 3px; }
 .message.user { align-self: flex-end; align-items: flex-end; }
 .message.model { align-self: flex-start; align-items: flex-start; }
-.message-label { font-size: 11px; color: var(--text-muted); padding: 0 4px; }
+.message-label-row { display: flex; align-items: center; gap: 5px; padding: 0 4px; }
+.message-label { font-size: 11px; color: var(--text-muted); }
+.btn-tts {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); padding: 1px 4px; border-radius: 4px;
+  display: flex; align-items: center; opacity: 0;
+  transition: opacity .12s, color .12s, background .12s;
+}
+.message:hover .btn-tts, .btn-tts.speaking { opacity: 1; }
+.btn-tts:hover { color: var(--accent); background: var(--surface2); }
+.btn-tts.speaking { color: var(--rec); animation: pulse-text 1s infinite; }
 .message-bubble {
   padding: 9px 13px; border-radius: var(--radius);
   font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
