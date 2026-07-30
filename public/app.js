@@ -56,7 +56,58 @@ document.addEventListener('pointerdown', (e) => {
 });
 
 // ═══════════════════════════════════════════════
-//  DATA STORE  –  persisted in localStorage
+//  SUPABASE CONFIG
+//  Credentials injected at build time or from meta tags
+// ═══════════════════════════════════════════════
+const SUPABASE_URL  = document.querySelector('meta[name="sb-url"]')?.content  || '';
+const SUPABASE_ANON = document.querySelector('meta[name="sb-anon"]')?.content || '';
+const SB_READY = !!(SUPABASE_URL && SUPABASE_ANON);
+
+// Stable device id — same device always has same id; share it between devices to sync
+let DEVICE_ID = localStorage.getItem('deviceId');
+if (!DEVICE_ID) { DEVICE_ID = 'dev_' + Math.random().toString(36).slice(2, 10); localStorage.setItem('deviceId', DEVICE_ID); }
+
+// Supabase REST helpers (no SDK needed — plain fetch)
+async function sbGet(table, eq = {}) {
+  if (!SB_READY) return [];
+  const params = new URLSearchParams({ select: '*', ...Object.fromEntries(Object.entries(eq).map(([k,v])=>[k, `eq.${v}`])) });
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}&order=created_at.asc`, {
+    headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}` }
+  });
+  if (!r.ok) {
+    const errText = await r.text().catch(() => r.status);
+    console.error(`sbGet ${table} error ${r.status}:`, errText);
+    throw new Error(`sbGet ${table}: ${r.status} ${errText}`);
+  }
+  return r.json();
+}
+
+async function sbUpsert(table, row) {
+  if (!SB_READY) return;
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+    method: 'POST',
+    headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}`,
+               'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' },
+    body: JSON.stringify(row)
+  });
+  if (!r.ok) {
+    const errText = await r.text().catch(() => r.status);
+    console.error(`sbUpsert ${table} error ${r.status}:`, errText);
+  }
+}
+
+async function sbDelete(table, id) {
+  if (!SB_READY) return;
+  await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}` }
+  });
+}
+
+// (polling removed — sync is manual via Push/Pull buttons)
+
+// ═══════════════════════════════════════════════
+//  DATA STORE  –  localStorage (primary) + Supabase (sync)
 // ═══════════════════════════════════════════════
 const STORE_KEY   = 'voiceChats_v2';
 const FOLDER_KEY  = 'voiceFolders_v2';
@@ -65,6 +116,50 @@ function loadStore()   { try { return JSON.parse(localStorage.getItem(STORE_KEY)
 function saveStore(s)  { localStorage.setItem(STORE_KEY, JSON.stringify(s)); }
 function loadFolders() { try { return JSON.parse(localStorage.getItem(FOLDER_KEY)) || {}; } catch { return {}; } }
 function saveFolders(f){ localStorage.setItem(FOLDER_KEY, JSON.stringify(f)); }
+
+// ── Sync helpers ──
+function chatToRow(c) {
+  return { id: c.id, device_id: DEVICE_ID, folder_id: c.folderId || null,
+           emoji: c.emoji || '💬', name: c.name, system_prompt: c.systemPrompt || '',
+           messages: c.messages || [], updated_at: new Date().toISOString() };
+}
+function rowToChat(r) {
+  return { id: r.id, emoji: r.emoji || '💬', name: r.name, systemPrompt: r.system_prompt || '',
+           folderId: r.folder_id || null, messages: r.messages || [] };
+}
+function folderToRow(f) {
+  return { id: f.id, device_id: DEVICE_ID, emoji: f.emoji || '📁',
+           name: f.name, system_prompt: f.systemPrompt || '' };
+}
+function rowToFolder(r) {
+  return { id: r.id, emoji: r.emoji || '📁', name: r.name, systemPrompt: r.system_prompt || '' };
+}
+
+async function syncFromSupabase(renderAfter = true, replace = false) {
+  if (!SB_READY) return;
+  try {
+    const [remoteChats, remoteFolders] = await Promise.all([
+      sbGet('chats',   { device_id: DEVICE_ID }),
+      sbGet('folders', { device_id: DEVICE_ID })
+    ]);
+
+    // replace=true: wipe local data and load only what's on Supabase for this device_id
+    // replace=false: merge (remote wins on conflict, local-only entries are kept)
+    const store = replace ? {} : loadStore();
+    remoteChats.forEach(r => { store[r.id] = { ...store[r.id], ...rowToChat(r) }; });
+    saveStore(store);
+
+    const folders = replace ? {} : loadFolders();
+    remoteFolders.forEach(r => { folders[r.id] = { ...folders[r.id], ...rowToFolder(r) }; });
+    saveFolders(folders);
+
+    if (renderAfter) { renderChatList(); }
+    return { chats: remoteChats.length, folders: remoteFolders.length };
+  } catch (e) {
+    console.error('syncFromSupabase error:', e);
+    throw e;   // re-throw so callers can show a toast
+  }
+}
 
 // ── Chats ──
 const DEFAULT_SYSTEM_PROMPT = 'Responde máximo en 200 palabras y termina con tres preguntas cortas para saber hacia dónde dirigir la conversación.';
@@ -79,23 +174,35 @@ function chatDefaultName() {
 function createChat(name, folderId) {
   const id = 'chat_' + Date.now();
   const store = loadStore();
-  // If inside a folder, inherit folder's system prompt; otherwise use default
   const folderPrompt = folderId ? (getFolder(folderId)?.systemPrompt || '') : '';
   store[id] = {
-    id,
-    emoji: '💬',
+    id, emoji: '💬',
     name: name || chatDefaultName(),
     systemPrompt: folderPrompt || DEFAULT_SYSTEM_PROMPT,
     folderId: folderId || null,
     messages: []
   };
   saveStore(store);
+  sbUpsert('chats', chatToRow(store[id]));
   return store[id];
 }
 
-function getChat(id)            { return loadStore()[id] || null; }
-function updateChat(id, patch)  { const s = loadStore(); if (!s[id]) return; Object.assign(s[id], patch); saveStore(s); }
-function deleteChat(id)         { const s = loadStore(); delete s[id]; saveStore(s); }
+function getChat(id)  { return loadStore()[id] || null; }
+
+function updateChat(id, patch) {
+  const s = loadStore();
+  if (!s[id]) return;
+  Object.assign(s[id], patch);
+  saveStore(s);
+  sbUpsert('chats', chatToRow(s[id]));
+}
+
+function deleteChat(id) {
+  const s = loadStore();
+  delete s[id];
+  saveStore(s);
+  sbDelete('chats', id);
+}
 
 function allChats() {
   return Object.values(loadStore()).sort((a, b) => {
@@ -111,12 +218,24 @@ function createFolder(name, emoji, systemPrompt) {
   const folders = loadFolders();
   folders[id] = { id, emoji: emoji || '📁', name: name || 'Nueva carpeta', systemPrompt: systemPrompt || '' };
   saveFolders(folders);
+  sbUpsert('folders', folderToRow(folders[id]));
   return folders[id];
 }
-function getFolder(id)            { return loadFolders()[id] || null; }
-function updateFolder(id, patch)  { const f = loadFolders(); if (!f[id]) return; Object.assign(f[id], patch); saveFolders(f); }
-function deleteFolder(id)         { const f = loadFolders(); delete f[id]; saveFolders(f); }
-function allFolders()             { return Object.values(loadFolders()); }
+function getFolder(id) { return loadFolders()[id] || null; }
+function updateFolder(id, patch) {
+  const f = loadFolders();
+  if (!f[id]) return;
+  Object.assign(f[id], patch);
+  saveFolders(f);
+  sbUpsert('folders', folderToRow(f[id]));
+}
+function deleteFolder(id) {
+  const f = loadFolders();
+  delete f[id];
+  saveFolders(f);
+  sbDelete('folders', id);
+}
+function allFolders() { return Object.values(loadFolders()); }
 
 // ── Track which folders are open ──
 const openFolders = new Set(JSON.parse(localStorage.getItem('openFolders') || '[]'));
@@ -126,11 +245,24 @@ function saveOpenFolders() { localStorage.setItem('openFolders', JSON.stringify(
 //  INIT
 // ═══════════════════════════════════════════════
 let activeChatId = localStorage.getItem('activeChatId');
-if (!activeChatId || !getChat(activeChatId)) {
-  const chat = createChat();
-  activeChatId = chat.id;
-  localStorage.setItem('activeChatId', activeChatId);
-}
+
+// Boot: sync from Supabase first, THEN ensure we have at least one chat
+syncFromSupabase(false, false).catch(() => {}).finally(() => {
+  // After sync, validate activeChatId — may have been populated by sync
+  if (!activeChatId || !getChat(activeChatId)) {
+    const existing = allChats();
+    if (existing.length > 0) {
+      activeChatId = existing[0].id;
+    } else {
+      const chat = createChat();
+      activeChatId = chat.id;
+    }
+    localStorage.setItem('activeChatId', activeChatId);
+  }
+  renderChatList();
+  switchChat(activeChatId);
+});
+
 
 // ═══════════════════════════════════════════════
 //  DOM REFS
@@ -152,6 +284,8 @@ const recOverlay      = document.getElementById('recOverlay');
 const recTimerEl      = document.getElementById('recTimer');
 const recCancelBtn    = document.getElementById('recCancelBtn');
 const recSendBtn      = document.getElementById('recSendBtn');
+const recAddTextBtn   = document.getElementById('recAddTextBtn');
+const recTextInput    = document.getElementById('recTextInput');
 const settingsBtn     = document.getElementById('settingsBtn');
 const ttsAutoBtn      = document.getElementById('ttsAutoBtn');
 const settingsModal   = document.getElementById('settingsModal');
@@ -217,6 +351,7 @@ function renderChatList() {
     });
     row.addEventListener('click', (e) => {
       if (e.target.classList.contains('folder-edit')) return;
+      e.stopPropagation(); // prevent sidebar close on mobile
       openFolders.has(folder.id) ? openFolders.delete(folder.id) : openFolders.add(folder.id);
       saveOpenFolders();
       renderChatList();
@@ -271,6 +406,44 @@ function makeChatItem(chat) {
   nameEl.className = 'chat-item-name';
   nameEl.textContent = chat.name;
 
+  // ── Inline rename on double-click ──
+  function startRename(e) {
+    e.stopPropagation();
+    const input = document.createElement('input');
+    input.className = 'chat-item-rename';
+    input.value = chat.name;
+    nameEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    function commit() {
+      const newName = input.value.trim() || chat.name;
+      updateChat(chat.id, { name: newName });
+      if (activeChatId === chat.id) {
+        const c = getChat(chat.id);
+        chatTitleEl.textContent = (c.emoji !== '💬' ? c.emoji + ' ' : '') + newName;
+        chatNameInput.value = newName;
+      }
+      renderChatList();
+    }
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter')  { ev.preventDefault(); input.blur(); }
+      if (ev.key === 'Escape') { input.value = chat.name; input.blur(); }
+      ev.stopPropagation();
+    });
+    input.addEventListener('click', e => e.stopPropagation());
+  }
+
+  nameEl.addEventListener('dblclick', startRename);
+
+  // pencil button (always visible on active, hover on rest)
+  const editBtn = document.createElement('button');
+  editBtn.className = 'chat-item-edit';
+  editBtn.title = 'Renombrar';
+  editBtn.textContent = '✎';
+  editBtn.addEventListener('click', (e) => { e.stopPropagation(); startRename(e); });
+
   const delBtn = document.createElement('button');
   delBtn.className = 'chat-item-del';
   delBtn.title = 'Eliminar';
@@ -286,7 +459,7 @@ function makeChatItem(chat) {
     }
   });
 
-  item.append(emojiEl, nameEl, delBtn);
+  item.append(emojiEl, nameEl, editBtn, delBtn);
   item.addEventListener('click', () => {
     switchChat(chat.id);
     sidebar.classList.remove('open');
@@ -357,7 +530,7 @@ function addMessageDOM(role, text, isAudio = false, audioDur = null) {
     const ttsBtn = document.createElement('button');
     ttsBtn.className = 'btn-tts';
     ttsBtn.title = 'Escuchar';
-    ttsBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="13" height="13">
+    ttsBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="15" height="15">
       <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
     </svg>`;
     ttsBtn.dataset.speaking = 'false';
@@ -382,6 +555,12 @@ function addMessageDOM(role, text, isAudio = false, audioDur = null) {
       chip.appendChild(dur);
     }
     bubble.appendChild(chip);
+    if (text) {
+      const extra = document.createElement('div');
+      extra.className = 'audio-text';
+      extra.textContent = text;
+      bubble.appendChild(extra);
+    }
   } else {
     bubble.textContent = text || '';
   }
@@ -422,6 +601,7 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
   if (audioBase64) {
     userMsg.isAudio  = true;
     userMsg.audioDur = audioDur || null;
+    if (text) userMsg.text = text;
   } else {
     userMsg.text = text;
     textInput.value = '';
@@ -443,7 +623,7 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
   const thinking = addThinkingDOM();
 
   try {
-    const body = { sessionId: activeChatId, systemPrompt: chat.systemPrompt || '' };
+    const body = { sessionId: activeChatId, systemPrompt: chat.systemPrompt || '', model: localStorage.getItem('selectedModel') || 'google:gemini-3.1-flash-lite-preview' };
     if (text) body.message = text;
     if (audioBase64) { body.audioBase64 = audioBase64; body.audioMimeType = audioMimeType; }
 
@@ -602,7 +782,7 @@ sendTextBtn.addEventListener('click', () => sendMessage(textInput.value.trim()))
 //              In overlay: "Enviar" button sends, "Cancelar" discards.
 //              Pressing mic button again in toggle mode also sends.
 // ═══════════════════════════════════════════════
-const HOLD_MS       = 300;
+const HOLD_MS       = 180;
 const LOCK_THRESHOLD = -60; // px upward to lock from hold → toggle
 
 let mediaRecorder      = null;
@@ -619,6 +799,13 @@ let pointerDownY       = 0;
 let pendingBlob        = null;
 let pendingMime        = null;
 let pendingDur         = 0;
+let cachedStream       = null;
+
+function warmMic() {
+  if (cachedStream) return;
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(s => { cachedStream = s; }).catch(() => {});
+}
+document.addEventListener('pointerdown', warmMic, { once: true, capture: true });
 
 function formatTime(s) {
   const m = Math.floor(s / 60);
@@ -639,6 +826,40 @@ function updateTimerUI() {
   btnTimer.textContent   = t;
 }
 
+function getSupportedMimeType() {
+  const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg', 'audio/mp4'];
+  for (const t of types) { if (MediaRecorder.isTypeSupported(t)) return t; }
+  return null;
+}
+
+async function blobToWav(blob) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  try {
+    const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
+    const input = decoded.getChannelData(0);
+    // Downsample to 16kHz — lighter upload, better for speech models
+    const targetRate = 16000;
+    const ratio = decoded.sampleRate / targetRate;
+    const len = Math.floor(input.length / ratio);
+    const buffer = new ArrayBuffer(44 + len * 2);
+    const view = new DataView(buffer);
+    const w = (o, s) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
+    w(0, 'RIFF'); view.setUint32(4, 36 + len * 2, true);
+    w(8, 'WAVE'); w(12, 'fmt ');
+    view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, targetRate, true); view.setUint32(28, targetRate * 2, true);
+    view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    w(36, 'data'); view.setUint32(40, len * 2, true);
+    for (let i = 0, o = 44; i < len; i++, o += 2) {
+      const sample = Math.max(-1, Math.min(1, input[Math.floor(i * ratio)] || 0));
+      view.setInt16(o, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    }
+    return new Blob([buffer], { type: 'audio/wav' });
+  } finally {
+    await ctx.close().catch(() => {});
+  }
+}
+
 async function beginRecording(mode) {
   if (isRecording) return;
   recordingCancelled = false;
@@ -646,47 +867,43 @@ async function beginRecording(mode) {
   recordingMode = mode;
 
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    if (recordingCancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+    if (!cachedStream || cachedStream.getTracks().some(t => t.readyState === 'ended')) {
+      cachedStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    }
+    if (recordingCancelled) return;
 
     audioChunks = [];
-    const mimeType   = getSupportedMimeType();
-    mediaRecorder    = new MediaRecorder(stream, mimeType ? { mimeType } : {});
-
+    const mimeType = getSupportedMimeType();
+    mediaRecorder = new MediaRecorder(cachedStream, mimeType ? { mimeType } : {});
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
 
     mediaRecorder.onstop = async () => {
-      stream.getTracks().forEach(t => t.stop());
       const dur = recSeconds;
       stopTimer();
-
       if (recordingCancelled || audioChunks.length === 0) {
         setRecordingUI(false);
         return;
       }
-
-      const actualMime = mediaRecorder.mimeType || mimeType || 'audio/webm';
-      pendingBlob = new Blob(audioChunks, { type: actualMime });
-      pendingMime = actualMime;
-      pendingDur  = dur;
-
-      // In hold mode: send immediately
-      // In toggle mode: show overlay with Send/Cancel buttons (already visible)
-      if (recordingMode === 'hold') {
+      try {
+        const raw = new Blob(audioChunks, { type: mediaRecorder.mimeType || mimeType || 'audio/webm' });
+        pendingBlob = await blobToWav(raw);
+        pendingMime = 'audio/wav';
+        pendingDur = dur;
+      } catch (err) {
+        showToast('Error al procesar audio: ' + err.message);
         setRecordingUI(false);
-        await doSendAudio();
-      } else {
-        // toggle: recording stopped, show review state in overlay
-        setOverlayReviewState(dur);
+        return;
       }
+      if (recordingMode === 'hold') await doSendAudio();
+      else setOverlayReviewState(dur);
     };
 
-    mediaRecorder.start();
+    mediaRecorder.start(100);
     isRecording = true;
     startTimer();
     setRecordingUI(true, mode);
-
   } catch (err) {
+    cachedStream = null;
     showToast('No se pudo acceder al micrófono: ' + err.message);
     setRecordingUI(false);
   }
@@ -694,31 +911,62 @@ async function beginRecording(mode) {
 
 async function doSendAudio() {
   if (!pendingBlob) return;
-  const blob  = pendingBlob;
-  const mime  = pendingMime;
-  const dur   = pendingDur;
+  const blob = pendingBlob;
+  const mime = pendingMime;
+  const dur = pendingDur;
+  const extraText = (recTextInput?.value || '').trim() || null;
   pendingBlob = null;
+  resetRecTextUI();
   setRecordingUI(false);
+  if (blob.size < 1000) { showToast('Grabación muy corta'); return; }
   const base64 = await blobToBase64(blob);
-  const cleanB64  = base64.includes(',') ? base64.split(',')[1] : base64;
-  const cleanMime = mime.split(';')[0];
-  await sendMessage(null, cleanB64, cleanMime, dur);
+  const cleanB64 = base64.includes(',') ? base64.split(',')[1] : base64;
+  await sendMessage(extraText, cleanB64, (mime || 'audio/wav').split(';')[0], dur);
+}
+
+function resetRecTextUI() {
+  if (recTextInput) {
+    recTextInput.value = '';
+    recTextInput.hidden = true;
+  }
+  if (recAddTextBtn) recAddTextBtn.classList.remove('active');
+}
+
+function showRecTextUI() {
+  if (!recTextInput) return;
+  recTextInput.hidden = false;
+  if (recAddTextBtn) recAddTextBtn.classList.add('active');
+  const hint = recOverlay.querySelector('.rec-hint');
+  if (hint) hint.textContent = 'Añade texto y pulsa Enviar';
+  recTextInput.focus();
+}
+
+async function enableRecText() {
+  // Always land in review (never auto-send) so the user can type first
+  recordingMode = 'toggle';
+  if (isRecording) {
+    stopRecording(false);
+    const t0 = Date.now();
+    while (!pendingBlob && !recordingCancelled && Date.now() - t0 < 2500) {
+      await new Promise(r => setTimeout(r, 30));
+    }
+  }
+  if (!pendingBlob) { showToast('No hay audio aún'); return; }
+  setOverlayReviewState(pendingDur);
+  showRecTextUI();
 }
 
 function stopRecording(cancel = false) {
   if (!isRecording) { recordingCancelled = cancel; return; }
   recordingCancelled = cancel;
-  mediaRecorder.stop();
   isRecording = false;
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
 }
 
-// Overlay shows "recording" state or "review" state (after stop in toggle)
 function setOverlayReviewState(dur) {
-  // Recording already stopped; show Send/Cancel in overlay, hide waveform animation
   recTimerEl.textContent = formatTime(dur);
-  // Swap hint text
-  recOverlay.querySelector('.rec-hint').textContent = 'Grabación lista — ¿Enviar?';
-  // Keep overlay visible, buttons already there
+  const hint = recOverlay.querySelector('.rec-hint');
+  if (hint) hint.textContent = 'Grabación lista — ¿Enviar?';
 }
 
 function setRecordingUI(on, mode) {
@@ -726,9 +974,8 @@ function setRecordingUI(on, mode) {
     recordBtn.classList.add('recording');
     iconMic.style.display = 'none';
     iconStop.style.display = '';
-    // Reset hint text
     if (recOverlay.querySelector('.rec-hint')) {
-      recOverlay.querySelector('.rec-hint').textContent = 'Grabando — bloqueado';
+      recOverlay.querySelector('.rec-hint').textContent = 'Grabando…';
     }
     if (mode === 'toggle') {
       recOverlay.classList.add('visible');
@@ -744,21 +991,15 @@ function setRecordingUI(on, mode) {
     recOverlay.classList.remove('visible');
     btnTimer.style.display = 'none';
     lockHint.classList.remove('visible');
-    pendingBlob = null;
+    resetRecTextUI();
   }
-}
-
-function getSupportedMimeType() {
-  const types = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/ogg','audio/mp4'];
-  for (const t of types) { if (MediaRecorder.isTypeSupported(t)) return t; }
-  return null;
 }
 
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onloadend = () => resolve(r.result);
-    r.onerror   = reject;
+    r.onerror = reject;
     r.readAsDataURL(blob);
   });
 }
@@ -819,19 +1060,20 @@ recordBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagati
 
 // ── Overlay buttons ──
 recSendBtn.addEventListener('click', async () => {
-  if (isRecording) {
-    // Stop recording first, then send (onstop will call doSendAudio via review state)
-    stopRecording(false);
-    // Give onstop a tick to run, then send
-    setTimeout(async () => { await doSendAudio(); }, 150);
-  } else {
-    await doSendAudio();
+  if (isRecording) stopRecording(false);
+  const t0 = Date.now();
+  while (!pendingBlob && !recordingCancelled && Date.now() - t0 < 2000) {
+    await new Promise(r => setTimeout(r, 30));
   }
+  await doSendAudio();
 });
+
+if (recAddTextBtn) recAddTextBtn.addEventListener('click', () => { enableRecText(); });
 
 recCancelBtn.addEventListener('click', () => {
   stopRecording(true);
   pendingBlob = null;
+  resetRecTextUI();
   setRecordingUI(false);
 });
 
@@ -841,6 +1083,7 @@ document.addEventListener('keydown', (e) => {
     if (recOverlay.classList.contains('visible')) {
       stopRecording(true);
       pendingBlob = null;
+      resetRecTextUI();
       setRecordingUI(false);
     }
   }
@@ -879,7 +1122,7 @@ function ttsToggle(btn, text) {
     btn.classList.add('speaking');
     btn.dataset.speaking = 'true';
     btn.title = 'Detener';
-    btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="13" height="13">
+    btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="15" height="15">
       <path d="M6 6h12v12H6z"/>
     </svg>`;
   };
@@ -887,7 +1130,7 @@ function ttsToggle(btn, text) {
     btn.classList.remove('speaking');
     btn.dataset.speaking = 'false';
     btn.title = 'Escuchar';
-    btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="13" height="13">
+    btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="15" height="15">
       <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
     </svg>`;
     if (activeTtsBtn === btn) activeTtsBtn = null;
@@ -932,7 +1175,269 @@ function showToast(msg, isError = true) {
 }
 
 // ═══════════════════════════════════════════════
-//  BOOT
+//  BOOT — device ID UI + link modal
 // ═══════════════════════════════════════════════
-renderChatList();
-switchChat(activeChatId);
+
+// ── Manual sync: Push / Pull ──
+const syncPushBtn = document.getElementById('syncPushBtn');
+const syncPullBtn = document.getElementById('syncPullBtn');
+
+if (syncPushBtn) syncPushBtn.addEventListener('click', async () => {
+  if (!SB_READY) { showToast('Supabase no configurado'); return; }
+  syncPushBtn.disabled = true;
+  try {
+    const localFolders = allFolders();
+    const localChats   = allChats();
+    await Promise.all([
+      ...localFolders.map(f => sbUpsert('folders', folderToRow(f))),
+      ...localChats.map(c => sbUpsert('chats',   chatToRow(c)))
+    ]);
+    showToast(`Subido: ${localChats.length} chat(s)`, false);
+  } catch (e) {
+    showToast('Error al subir: ' + e.message);
+  } finally {
+    syncPushBtn.disabled = false;
+  }
+});
+
+if (syncPullBtn) syncPullBtn.addEventListener('click', async () => {
+  if (!SB_READY) { showToast('Supabase no configurado'); return; }
+  syncPullBtn.disabled = true;
+  try {
+    const result = await syncFromSupabase(true, false);
+    // Ensure active chat still exists
+    if (!getChat(activeChatId)) {
+      const chats = allChats();
+      activeChatId = chats.length > 0 ? chats[0].id : createChat().id;
+      localStorage.setItem('activeChatId', activeChatId);
+      switchChat(activeChatId);
+    } else {
+      renderChatList();
+    }
+    showToast(`Bajado: ${result.chats} chat(s)`, false);
+  } catch (e) {
+    showToast('Error al bajar: ' + e.message);
+  } finally {
+    syncPullBtn.disabled = false;
+  }
+});
+
+// ── Global settings modal (model selector) ──
+const DEFAULT_MODEL = 'google:gemini-3.1-flash-lite-preview';
+const BUILTIN_MODELS = [
+  { value: 'google:gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite', tag: 'Google' },
+  { value: 'openrouter:google/gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite', tag: 'OpenRouter' },
+  { value: 'openrouter:google/gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', tag: 'OpenRouter' },
+  { value: 'openrouter:google/gemini-3-flash-preview', name: 'Gemini 3 Flash', tag: 'OpenRouter' },
+];
+
+const globalSettingsBtn   = document.getElementById('globalSettingsBtn');
+const globalSettingsModal = document.getElementById('globalSettingsModal');
+const closeGlobalSettings = document.getElementById('closeGlobalSettings');
+const saveGlobalSettings  = document.getElementById('saveGlobalSettings');
+const modelOptionsEl      = document.getElementById('modelOptions');
+const addModelProvider    = document.getElementById('addModelProvider');
+const addModelId          = document.getElementById('addModelId');
+const addModelBtn         = document.getElementById('addModelBtn');
+const addModelHint        = document.getElementById('addModelHint');
+
+function loadCustomModels() {
+  try { return JSON.parse(localStorage.getItem('customModels') || '[]'); } catch { return []; }
+}
+function saveCustomModels(list) {
+  localStorage.setItem('customModels', JSON.stringify(list));
+}
+
+function modelLabel(id) {
+  const bare = id.split('/').pop() || id;
+  return bare.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function renderModelOptions() {
+  if (!modelOptionsEl) return;
+  const current = localStorage.getItem('selectedModel') || DEFAULT_MODEL;
+  const customs = loadCustomModels();
+  const all = [
+    ...BUILTIN_MODELS.map(m => ({ ...m, custom: false })),
+    ...customs.map(m => ({ ...m, custom: true })),
+  ];
+  modelOptionsEl.innerHTML = all.map(m => `
+    <label class="model-option">
+      <input type="radio" name="aiModel" value="${m.value}" ${m.value === current ? 'checked' : ''} />
+      <span class="model-option-name">${m.name}</span>
+      <span class="model-option-tag">${m.tag}</span>
+      ${m.custom ? `<button type="button" class="model-remove" data-value="${m.value}" title="Quitar">✕</button>` : ''}
+    </label>
+  `).join('');
+}
+
+function updateAddModelHint() {
+  if (!addModelHint || !addModelProvider) return;
+  if (addModelProvider.value === 'google') {
+    addModelHint.textContent = 'Google API: ej. gemini-2.5-flash';
+    if (addModelId) addModelId.placeholder = 'gemini-2.5-flash';
+  } else {
+    addModelHint.textContent = 'OpenRouter: ej. google/gemini-2.5-pro';
+    if (addModelId) addModelId.placeholder = 'google/gemini-2.5-pro';
+  }
+}
+
+function openGlobalSettings() {
+  renderModelOptions();
+  updateAddModelHint();
+  globalSettingsModal.classList.add('open');
+}
+
+if (globalSettingsBtn)   globalSettingsBtn.addEventListener('click', openGlobalSettings);
+if (closeGlobalSettings) closeGlobalSettings.addEventListener('click', () => globalSettingsModal.classList.remove('open'));
+if (globalSettingsModal) globalSettingsModal.addEventListener('click', (e) => { if (e.target === globalSettingsModal) globalSettingsModal.classList.remove('open'); });
+if (addModelProvider)    addModelProvider.addEventListener('change', updateAddModelHint);
+
+if (modelOptionsEl) modelOptionsEl.addEventListener('click', (e) => {
+  const btn = e.target.closest('.model-remove');
+  if (!btn) return;
+  e.preventDefault();
+  const value = btn.dataset.value;
+  saveCustomModels(loadCustomModels().filter(m => m.value !== value));
+  if (localStorage.getItem('selectedModel') === value) localStorage.setItem('selectedModel', DEFAULT_MODEL);
+  renderModelOptions();
+});
+
+if (addModelBtn) addModelBtn.addEventListener('click', () => {
+  const provider = addModelProvider?.value || 'google';
+  let id = (addModelId?.value || '').trim().replace(/^models\//, '');
+  if (!id) { showToast('Escribe el ID del modelo'); return; }
+  // Allow pasting "google:xxx" / "openrouter:xxx" or raw id
+  if (id.includes(':')) {
+    const [p, ...rest] = id.split(':');
+    id = rest.join(':');
+    if (p === 'google' || p === 'openrouter') addModelProvider.value = p;
+  }
+  const finalProvider = addModelProvider.value || provider;
+  const value = `${finalProvider}:${id}`;
+  const customs = loadCustomModels();
+  if (BUILTIN_MODELS.some(m => m.value === value) || customs.some(m => m.value === value)) {
+    showToast('Ese modelo ya está en la lista', false);
+    return;
+  }
+  customs.push({
+    value,
+    name: modelLabel(id),
+    tag: finalProvider === 'google' ? 'Google' : 'OpenRouter',
+  });
+  saveCustomModels(customs);
+  localStorage.setItem('selectedModel', value);
+  if (addModelId) addModelId.value = '';
+  renderModelOptions();
+  showToast('Modelo agregado', false);
+});
+
+if (saveGlobalSettings) saveGlobalSettings.addEventListener('click', () => {
+  const selected = globalSettingsModal.querySelector('input[name="aiModel"]:checked');
+  if (selected) {
+    localStorage.setItem('selectedModel', selected.value);
+    showToast('Modelo guardado', false);
+  }
+  globalSettingsModal.classList.remove('open');
+});
+
+// ── Device ID display + copy ──
+const deviceIdDisplay  = document.getElementById('deviceIdDisplay');
+const copyDeviceIdBtn  = document.getElementById('copyDeviceId');
+const linkDeviceBtn    = document.getElementById('linkDeviceBtn');
+const linkDeviceModal  = document.getElementById('linkDeviceModal');
+const closeLinkDevice  = document.getElementById('closeLinkDevice');
+const linkDeviceInput  = document.getElementById('linkDeviceInput');
+const confirmLinkBtn   = document.getElementById('confirmLinkDevice');
+const resetDeviceBtn   = document.getElementById('resetDeviceId');
+const linkModalCurrent = document.getElementById('linkModalCurrentId');
+const linkModalCopyBtn = document.getElementById('linkModalCopyBtn');
+
+function refreshDeviceIdUI() {
+  if (deviceIdDisplay)  deviceIdDisplay.textContent  = DEVICE_ID;
+  if (linkModalCurrent) linkModalCurrent.textContent = DEVICE_ID;
+}
+refreshDeviceIdUI();
+
+function copyToClipboard(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    if (btn) { btn.classList.add('copied'); setTimeout(() => btn.classList.remove('copied'), 2000); }
+    showToast('ID copiado al portapapeles', false);
+  }).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+    showToast('ID copiado al portapapeles', false);
+  });
+}
+
+if (copyDeviceIdBtn) copyDeviceIdBtn.addEventListener('click', () => copyToClipboard(DEVICE_ID, copyDeviceIdBtn));
+if (linkModalCopyBtn) linkModalCopyBtn.addEventListener('click', () => copyToClipboard(DEVICE_ID, linkModalCopyBtn));
+
+// ── Open / close link modal ──
+if (linkDeviceBtn) linkDeviceBtn.addEventListener('click', () => {
+  linkDeviceInput.value = '';
+  refreshDeviceIdUI();
+  linkDeviceModal.classList.add('open');
+});
+if (closeLinkDevice) closeLinkDevice.addEventListener('click', () => linkDeviceModal.classList.remove('open'));
+if (linkDeviceModal) linkDeviceModal.addEventListener('click', (e) => {
+  if (e.target === linkDeviceModal) linkDeviceModal.classList.remove('open');
+});
+
+// ── Confirm link: switch to the other device's ID and pull its data ──
+if (confirmLinkBtn) confirmLinkBtn.addEventListener('click', async () => {
+  const newId = linkDeviceInput.value.trim();
+  if (!newId) { showToast('Pega un ID válido'); return; }
+  if (newId === DEVICE_ID) { showToast('Ya estás usando ese ID', false); linkDeviceModal.classList.remove('open'); return; }
+
+  linkDeviceModal.classList.remove('open');
+  showToast('Sincronizando…', false);
+
+  try {
+    // 1. Re-upload all local data under the new device_id BEFORE switching
+    //    so nothing gets lost on either side.
+    const localFolders = allFolders();
+    const localChats   = allChats();
+
+    // Switch device ID globally
+    DEVICE_ID = newId;
+    localStorage.setItem('deviceId', DEVICE_ID);
+    refreshDeviceIdUI();
+
+    // Upload local folders + chats with the new device_id
+    await Promise.all([
+      ...localFolders.map(f => sbUpsert('folders', folderToRow(f))),
+      ...localChats.map(c => sbUpsert('chats',   chatToRow(c)))
+    ]);
+
+    // 2. Pull everything from Supabase for this device_id (replace local store)
+    const result = await syncFromSupabase(true, true);
+
+    // 3. Switch to first chat
+    const chats = allChats();
+    if (chats.length > 0) {
+      activeChatId = chats[0].id;
+      localStorage.setItem('activeChatId', activeChatId);
+      switchChat(activeChatId);
+    } else {
+      const chat = createChat();
+      activeChatId = chat.id;
+      localStorage.setItem('activeChatId', activeChatId);
+      switchChat(activeChatId);
+    }
+    showToast(`Sincronizado: ${result.chats} chat(s) cargado(s)`, false);
+  } catch (e) {
+    showToast('Error al sincronizar: ' + e.message);
+  }
+});
+
+// ── Reset: generate a brand-new device ID ──
+if (resetDeviceBtn) resetDeviceBtn.addEventListener('click', () => {
+  if (!confirm('¿Generar un nuevo ID? Perderás la sincronización con el ID actual.')) return;
+  DEVICE_ID = 'dev_' + Math.random().toString(36).slice(2, 10);
+  localStorage.setItem('deviceId', DEVICE_ID);
+  linkDeviceModal.classList.remove('open');
+  refreshDeviceIdUI();
+  showToast('Nuevo ID generado', false);
+});
