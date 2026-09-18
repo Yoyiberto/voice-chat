@@ -1,0 +1,16 @@
+{
+  "name": "voice-chat-cloudflare-d1-lab",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Isolated Cloudflare Worker + D1 persistence lab for Voice Chat",
+  "scripts": {
+    "test": "node --test test/**/*.test.js",
+    "dev": "wrangler dev --local",
+    "d1:migrate": "wrangler d1 migrations apply voice-chat-d1 --local",
+    "d1:migrate:remote": "wrangler d1 migrations apply voice-chat-d1 --remote"
+  },
+  "devDependencies": {
+    "wrangler": "^4.34.0"
+  }
+}

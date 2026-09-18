@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chunk Transcription Lab</title>
+  <link rel="stylesheet" href="chunk-transcription-lab.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <p class="eyebrow">LABORATORIO / TRANSCRIPCION INCREMENTAL</p>
+      <h1>Un chunk entra.<br><em>El siguiente ya se esta grabando.</em></h1>
+      <p class="lede">Esta pagina aisla el flujo de audio por segmentos. Cada chunk se cierra, se envia a <code>/transcribe</code> inmediatamente y se muestra su resultado sin esperar a detener toda la grabacion.</p>
+      <a class="back" href="index.html">← App principal</a>
+      <span class="back-separator">·</span>
+      <a class="back" href="audio-lab.html">Audio Lab</a>
+    </header>
+
+    <section class="card controls">
+      <div class="section-top"><div><p class="kicker">01 / EXPERIMENTO</p><h2>Graba y observa el pipeline</h2></div><span class="badge" id="state">READY</span></div>
+      <div class="control-row">
+        <button class="record" id="recordBtn" type="button"><span class="mic-dot"></span><span id="recordLabel">Empezar</span></button>
+        <label>Duracion del chunk <select id="chunkSize"><option value="5000">5 segundos</option><option value="10000" selected>10 segundos</option><option value="15000">15 segundos</option><option value="20000">20 segundos</option><option value="30000">30 segundos</option></select></label>
+        <span id="timer" class="timer">0:00</span>
+      </div>
+      <p class="hint">Prueba 5 s para ver claramente el solapamiento. El limite solo cambia cuando se rota el grabador; no espera al final.</p>
+      <div class="options"><label class="check"><input type="checkbox" id="normalizeAudio" /> Normalizar audio antes de transcribir</label><span class="option-note">Escuchar reproduce siempre el audio original capturado.</span></div>
+      <p class="error" id="error" role="alert"></p>
+    </section>
+
+    <section class="dashboard">
+      <div class="card transcript-card">
+        <div class="section-top"><div><p class="kicker">02 / RESULTADO EN VIVO</p><h2>Transcripcion acumulada</h2></div><span class="live-dot" id="liveDot">●</span></div>
+        <div class="transcript" id="transcript"><span class="placeholder">Habla despues de pulsar Empezar...</span></div>
+      </div>
+      <div class="card stats-card">
+        <p class="kicker">03 / TELEMETRIA</p>
+        <div class="stats" id="stats"></div>
+        <div class="legend"><span class="recording-key">● grabando</span><span class="uploading-key">● enviando</span><span class="done-key">● recibido</span></div>
+      </div>
+    </section>
+
+    <section class="card timeline-card">
+      <div class="section-top"><div><p class="kicker">04 / LINEA DE TIEMPO</p><h2>Cada segmento, por separado</h2></div><button class="quiet" id="clearBtn" type="button">Limpiar</button></div>
+      <p class="hint timeline-hint">Escucha cada chunk para detectar cortes de palabras, ruido o audio vacio. Compara 5 s contra 10 s y 15 s.</p>
+      <div class="timeline" id="timeline"><div class="empty">Aun no hay chunks. El primer envio aparecera aqui al cerrar el primer segmento.</div></div>
+    </section>
+
+    <footer><span>CHUNK LAB</span><span>/</span><span>POSTS INMEDIATOS A /transcribe</span></footer>
+  </main>
+  <script src="normalize-audio.js"></script>
+  <script src="chunk-transcription-lab.js"></script>
+</body>
+</html>

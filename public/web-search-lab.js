@@ -1,0 +1,45 @@
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const els = { prompt: $('prompt'), preset: $('promptPreset'), transcript: $('transcript'), transcriptStatus: $('transcriptStatus'), state: $('state'), error: $('error'), results: $('results'), record: $('record'), recordLabel: $('recordLabel'), timer: $('timer') };
+  const prompts = { current: 'What are the biggest technology stories today?', timeless: 'Explain why the sky is blue to a curious child.' };
+  let recorder, chunks = [], started = 0, timerId, busy = false;
+
+  function setError(message) { els.error.textContent = message || ''; els.error.hidden = !message; }
+  function setBusy(value, label) { busy = value; els.state.textContent = label || (value ? 'RUNNING' : 'READY'); els.state.classList.toggle('busy', value); document.querySelectorAll('.actions button').forEach((b) => b.disabled = value); }
+  function clock() { const seconds = Math.floor((Date.now() - started) / 1000); els.timer.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`; if (seconds >= 30) stopRecording(); }
+  function mimeType() { return ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg'].find((type) => window.MediaRecorder?.isTypeSupported(type)) || ''; }
+  function toBase64(blob) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',').pop()); reader.onerror = reject; reader.readAsDataURL(blob); }); }
+  async function startRecording() {
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) throw new Error('This browser does not support microphone recording.');
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    chunks = []; const type = mimeType(); recorder = new MediaRecorder(stream, type ? { mimeType: type } : {});
+    recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+    recorder.onstop = async () => { stream.getTracks().forEach((track) => track.stop()); clearInterval(timerId); els.record.classList.remove('active'); els.recordLabel.textContent = 'Record prompt'; if (!chunks.length) return; try { await transcribe(new Blob(chunks, { type: recorder.mimeType || type || 'audio/webm' })); } catch (error) { setError(error.message); els.transcriptStatus.textContent = 'Failed'; } };
+    recorder.start(); started = Date.now(); timerId = setInterval(clock, 250); els.record.classList.add('active'); els.recordLabel.textContent = 'Stop recording';
+  }
+  function stopRecording() { if (recorder && recorder.state !== 'inactive') recorder.stop(); }
+  async function transcribe(blob) {
+    els.transcriptStatus.textContent = 'Transcribing...'; els.transcript.className = ''; els.transcript.textContent = 'Groq is transcribing the short recording.';
+    const data = await toBase64(blob); const response = await fetch('/transcribe', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ audioBase64:data, audioMimeType:blob.type.split(';')[0], groqApiKey:localStorage.getItem('groqApiKey') || '' }) });
+    const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.error || `Transcription failed (${response.status})`);
+    els.transcript.className = ''; els.transcript.textContent = payload.transcript || payload.text || ''; els.transcriptStatus.textContent = 'Ready to test'; if (els.transcript.textContent) els.prompt.value = els.transcript.textContent;
+  }
+  function requestText() { const typed = els.prompt.value.trim(); const transcript = els.transcript.textContent.trim(); const text = typed || transcript; if (!text || (!typed && transcript.includes('will appear'))) throw new Error('Enter a prompt or record audio first.'); return text; }
+  function num(value, fallback = 0) { return Number.isFinite(Number(value)) ? Number(value) : fallback; }
+  function list(payload) { return payload.citations || payload.provider?.citations || payload.sources || payload.web?.citations || []; }
+  function count(payload) { return num(payload.searchRequestCount ?? payload.provider?.searchRequests ?? payload.search?.requestCount ?? payload.webSearch?.requestCount ?? payload.usage?.server_tool_use?.web_search_requests ?? payload.provider?.usage?.server_tool_use?.web_search_requests); }
+  function timing(payload) { const t = payload.timings || {}; return { total:num(t.totalMs ?? payload.totalMs), completion:num(t.completionMs ?? payload.completionMs), transcription:num(t.transcriptionMs ?? payload.transcriptionMs) }; }
+  function resultCard(payload, mode, requestText) {
+    const times = timing(payload), citations = list(payload); const provider = payload.provider || {}; const usage = payload.usage || provider.usage || {};
+    const links = citations.map((item) => { const url = typeof item === 'string' ? item : item.url || item.link; const title = typeof item === 'string' ? item : item.title || item.name || url; return url ? `<a href="${escapeAttr(url)}" target="_blank" rel="noreferrer">${escapeHtml(title || url)}</a>` : ''; }).join('');
+    const searchCount = count(payload);
+    return `<article class="card result"><div class="result-head"><div><span class="mode">${mode === 'search' ? 'WEB SEARCH TRUE' : 'WEB SEARCH FALSE'}</span><h3>${mode === 'search' ? 'With search' : 'Without search'}</h3></div><span class="badge">DONE</span></div><div class="reply">${escapeHtml(payload.reply || payload.error || 'No response')}</div><div class="meta"><div class="metric"><b>${times.total || '-'}${times.total ? ' ms' : ''}</b><small>total time</small></div><div class="metric"><b>${searchCount === null ? '-' : searchCount}</b><small>search requests</small></div><div class="metric"><b>${num(usage.total_tokens ?? usage.totalTokens) || '-'}</b><small>usage tokens</small></div></div><div class="provider">Provider <strong>${escapeHtml(provider.completion || payload.providerName || '-')}</strong> / model <strong>${escapeHtml(provider.model || payload.model || '-')}</strong>${times.completion ? ` / completion ${times.completion} ms` : ''}${times.transcription ? ` / transcription ${times.transcription} ms` : ''}</div>${links ? `<div class="citations"><h4>Citations</h4>${links}</div>` : '<div class="citations"><h4>Citations</h4><span class="provider">None returned</span></div>'}<details><summary>EXPAND RAW JSON</summary><pre>${escapeHtml(JSON.stringify({ request: { message: requestText, webSearch: mode === 'search' }, response: payload }, null, 2))}</pre></details></article>`;
+  }
+  async function run(mode, text) { const sessionId = `web-search-lab-${Date.now()}-${Math.random().toString(36).slice(2)}`; const response = await fetch('/pipeline', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ sessionId, message:text, webSearch:mode === 'search', model:(localStorage.getItem('selectedModel') || 'pipeline:openai/gpt-5.6-luna').replace(/^pipeline:/,''), groqApiKey:localStorage.getItem('groqApiKey') || '', openrouterApiKey:localStorage.getItem('openrouterApiKey') || '' }) }); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.error || `Pipeline failed (${response.status})`); return payload; }
+  async function execute(modes) { if (busy) return; setError(''); let text; try { text = requestText(); } catch (error) { setError(error.message); return; } setBusy(true, 'RUNNING'); els.results.innerHTML = '<div class="empty-results">Running controlled pipeline test...</div>'; try { const outputs = []; for (const mode of modes) outputs.push([mode, await run(mode, text)]); els.results.innerHTML = outputs.map(([mode, payload]) => resultCard(payload, mode, text)).join(''); } catch (error) { setError(error.message); els.results.innerHTML = ''; } finally { setBusy(false); } }
+  function escapeHtml(value) { return String(value).replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char])); }
+  function escapeAttr(value) { return escapeHtml(value).replace(/`/g, '&#96;'); }
+  $('loadPrompt').addEventListener('click', () => { els.prompt.value = prompts[els.preset.value]; els.prompt.focus(); }); els.preset.addEventListener('change', () => { els.prompt.value = prompts[els.preset.value]; });
+  els.record.addEventListener('click', () => { if (recorder?.state === 'recording') stopRecording(); else startRecording().catch((error) => setError(error.message)); }); $('runNoSearch').addEventListener('click', () => execute(['no-search'])); $('runSearch').addEventListener('click', () => execute(['search'])); $('runBoth').addEventListener('click', () => execute(['no-search','search'])); $('clear').addEventListener('click', () => { if (recorder?.state === 'recording') stopRecording(); els.prompt.value = ''; els.transcript.textContent = 'Your Groq transcript will appear here.'; els.transcript.className = 'muted'; els.transcriptStatus.textContent = 'No audio yet'; els.results.innerHTML = ''; setError(''); });
+})();

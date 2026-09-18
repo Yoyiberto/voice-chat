@@ -4,7 +4,12 @@
   "outputDirectory": "public",
   "routes": [
     { "src": "/chat", "dest": "/api/chat" },
+    { "src": "/pipeline", "dest": "/api/pipeline" },
+    { "src": "/transcribe", "dest": "/api/transcribe" },
+    { "src": "/conversation-questions", "dest": "/api/conversation-questions" },
     { "src": "/clear", "dest": "/api/clear" },
+    { "src": "/tts", "dest": "/api/tts" },
+    { "src": "/health", "dest": "/api/health" },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/$1" }
   ]

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Long Talk Lab</title>
+  <link rel="stylesheet" href="long-talk.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">VOICE LAB / ISOLATED TEST</p>
+        <h1>Long talk, in small pieces.</h1>
+        <p class="lede">Record continuously while each short segment is transcribed on its own. Your audio is never sent to the final pipeline as one giant upload.</p>
+      </div>
+      <div class="signal" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+    </header>
+
+    <section class="control-card" aria-label="Recording controls">
+      <div class="status-row">
+        <span class="status-dot" id="statusDot"></span>
+        <strong id="statusText">Ready to record</strong>
+        <span class="timer" id="timer">00:00</span>
+      </div>
+      <div class="progress"><span id="progressBar"></span></div>
+      <div class="controls">
+        <button class="primary" id="startBtn">Start recording</button>
+        <button id="pauseBtn" disabled>Pause</button>
+        <button id="cancelBtn" disabled>Cancel</button>
+        <button class="finish" id="finishBtn" disabled>Finish and process</button>
+      </div>
+      <p class="hint" id="hint">Segments roll over every 25 seconds. Pause keeps the current segment alive.</p>
+    </section>
+
+    <section class="transcript-card">
+      <div class="section-heading"><div><p class="eyebrow">LIVE TRANSCRIPT</p><h2>Accumulated words</h2></div><span class="pill" id="wordCount">0 words</span></div>
+      <div class="transcript" id="transcript"><span class="empty">Your transcript will appear here as segments complete.</span></div>
+      <div class="pipeline-result" id="pipelineResult" hidden>
+        <p class="eyebrow">PIPELINE RESPONSE</p><div id="reply"></div>
+      </div>
+    </section>
+
+    <section class="segments-card">
+      <div class="section-heading"><div><p class="eyebrow">SEGMENT QUEUE</p><h2>Transcription activity</h2></div><span class="pill" id="segmentCount">0 segments</span></div>
+      <ol class="segments" id="segments"><li class="empty">No segments yet.</li></ol>
+    </section>
+
+  </main>
+  <script src="long-talk.js" defer></script>
+</body>
+</html>

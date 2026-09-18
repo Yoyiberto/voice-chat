@@ -1,0 +1,3 @@
+# Copy to .dev.vars for local protected requests.
+# If omitted, local requests are accepted for convenience.
+D1_TEST_TOKEN=change-me

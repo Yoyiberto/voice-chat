@@ -62,10 +62,21 @@ document.addEventListener('pointerdown', (e) => {
 const SUPABASE_URL  = document.querySelector('meta[name="sb-url"]')?.content  || '';
 const SUPABASE_ANON = document.querySelector('meta[name="sb-anon"]')?.content || '';
 const SB_READY = !!(SUPABASE_URL && SUPABASE_ANON);
+localStorage.removeItem('voiceAuthSession');
 
-// Stable device id — same device always has same id; share it between devices to sync
-let DEVICE_ID = localStorage.getItem('deviceId');
-if (!DEVICE_ID) { DEVICE_ID = 'dev_' + Math.random().toString(36).slice(2, 10); localStorage.setItem('deviceId', DEVICE_ID); }
+// Simple shared username. This is intentionally not authentication.
+let DEVICE_ID = localStorage.getItem('voiceUsername') || localStorage.getItem('deviceId');
+if (!DEVICE_ID) DEVICE_ID = 'usuario_' + Math.random().toString(36).slice(2, 8);
+localStorage.setItem('voiceUsername', DEVICE_ID);
+localStorage.setItem('deviceId', DEVICE_ID);
+
+function currentProviderLabel() {
+  const selected = localStorage.getItem('selectedModel') || 'pipeline:openai/gpt-5.6-luna';
+  if (selected.startsWith('pipeline:')) return 'Whisper + Luna';
+  if (selected.startsWith('openrouter:')) return 'OpenRouter';
+  return 'Gemini';
+}
+localStorage.setItem('lastResponseProvider', currentProviderLabel());
 
 // Supabase REST helpers (no SDK needed — plain fetch)
 async function sbGet(table, eq = {}) {
@@ -93,6 +104,7 @@ async function sbUpsert(table, row) {
   if (!r.ok) {
     const errText = await r.text().catch(() => r.status);
     console.error(`sbUpsert ${table} error ${r.status}:`, errText);
+    throw new Error(`Supabase ${table}: ${errText || r.status}`);
   }
 }
 
@@ -119,7 +131,7 @@ function saveFolders(f){ localStorage.setItem(FOLDER_KEY, JSON.stringify(f)); }
 
 // ── Sync helpers ──
 function chatToRow(c) {
-  return { id: c.id, device_id: DEVICE_ID, folder_id: c.folderId || null,
+  return { id: c.id, device_id: DEVICE_ID, user_id: null, folder_id: c.folderId || null,
            emoji: c.emoji || '💬', name: c.name, system_prompt: c.systemPrompt || '',
            messages: c.messages || [], updated_at: new Date().toISOString() };
 }
@@ -128,7 +140,7 @@ function rowToChat(r) {
            folderId: r.folder_id || null, messages: r.messages || [] };
 }
 function folderToRow(f) {
-  return { id: f.id, device_id: DEVICE_ID, emoji: f.emoji || '📁',
+  return { id: f.id, device_id: DEVICE_ID, user_id: null, emoji: f.emoji || '📁',
            name: f.name, system_prompt: f.systemPrompt || '' };
 }
 function rowToFolder(r) {
@@ -137,10 +149,11 @@ function rowToFolder(r) {
 
 async function syncFromSupabase(renderAfter = true, replace = false) {
   if (!SB_READY) return;
+  const ownerFilter = { device_id: DEVICE_ID };
   try {
     const [remoteChats, remoteFolders] = await Promise.all([
-      sbGet('chats',   { device_id: DEVICE_ID }),
-      sbGet('folders', { device_id: DEVICE_ID })
+      sbGet('chats', ownerFilter),
+      sbGet('folders', ownerFilter)
     ]);
 
     // replace=true: wipe local data and load only what's on Supabase for this device_id
@@ -162,7 +175,7 @@ async function syncFromSupabase(renderAfter = true, replace = false) {
 }
 
 // ── Chats ──
-const DEFAULT_SYSTEM_PROMPT = 'Responde máximo en 200 palabras y termina con tres preguntas cortas para saber hacia dónde dirigir la conversación.';
+const DEFAULT_SYSTEM_PROMPT = 'Responde máximo en 100 palabras y termina con tres preguntas cortas para saber hacia dónde dirigir la conversación. No te limites a repetir lo que dice el usuario: si en alguna ocasión repites algo de lo que dijo, que sea para aportar claridad real o señalar un insight importante. Sé concreto y evita respuestas vagas o que solo hagan eco de lo dicho.';
 
 function chatDefaultName() {
   const now = new Date();
@@ -196,6 +209,62 @@ function updateChat(id, patch) {
   saveStore(s);
   sbUpsert('chats', chatToRow(s[id]));
 }
+
+function moveChatToFolder(chatId, folderId) {
+  const chat = getChat(chatId);
+  if (!chat) return;
+  if ((chat.folderId || null) === (folderId || null)) return;
+  updateChat(chatId, { folderId: folderId || null });
+  if (folderId) {
+    openFolders.add(folderId);
+    saveOpenFolders();
+  }
+  renderChatList();
+  const dest = folderId ? (getFolder(folderId)?.name || 'carpeta') : 'raíz';
+  showToast(`Movido a ${dest}`, false);
+}
+
+/** Rename with optional path: "Carpeta/Nombre" moves into folder; "/Nombre" or "./Nombre" → root */
+function applyChatRename(chatId, raw) {
+  const chat = getChat(chatId);
+  if (!chat) return;
+  const value = (raw || '').trim() || chat.name;
+  if (!value.includes('/')) {
+    updateChat(chatId, { name: value });
+    return value;
+  }
+  const slash = value.indexOf('/');
+  const folderPart = value.slice(0, slash).trim();
+  const chatName = value.slice(slash + 1).trim() || chat.name;
+
+  if (!folderPart || folderPart === '.' || folderPart === '..') {
+    updateChat(chatId, { name: chatName, folderId: null });
+    return chatName;
+  }
+
+  let folder = allFolders().find(f => f.name.toLowerCase() === folderPart.toLowerCase());
+  if (!folder) folder = createFolder(folderPart, '📁', '');
+  openFolders.add(folder.id);
+  saveOpenFolders();
+  updateChat(chatId, { name: chatName, folderId: folder.id });
+  return chatName;
+}
+
+function enableDropTarget(el, folderId) {
+  el.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    el.classList.add('drag-over');
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+  el.addEventListener('drop', (e) => {
+    e.preventDefault();
+    el.classList.remove('drag-over');
+    const chatId = e.dataTransfer.getData('text/chat-id') || e.dataTransfer.getData('text/plain');
+    if (chatId) moveChatToFolder(chatId, folderId);
+  });
+}
+
 
 function deleteChat(id) {
   const s = loadStore();
@@ -305,18 +374,47 @@ const saveFolderBtn   = document.getElementById('saveFolderBtn');
 const deleteFolderBtn = document.getElementById('deleteFolderBtn');
 const iconMic         = recordBtn.querySelector('.icon-mic');
 const iconStop        = recordBtn.querySelector('.icon-stop');
+const modeMenuBtn     = document.getElementById('modeMenuBtn');
+const modeMenu        = document.getElementById('modeMenu');
 
 // ═══════════════════════════════════════════════
 //  SIDEBAR
 // ═══════════════════════════════════════════════
 toggleSidebar.addEventListener('click', () => sidebar.classList.toggle('open'));
 
+function renderModeMenu() {
+  const current = window.VoiceModes?.getMode() || 'long-talk';
+  modeMenu?.querySelectorAll('.mode-option').forEach((button) => button.classList.toggle('active', button.dataset.mode === current));
+  if (modeMenuBtn) modeMenuBtn.setAttribute('aria-expanded', modeMenu?.classList.contains('open') ? 'true' : 'false');
+}
+function closeModeMenu() {
+  modeMenu?.classList.remove('open');
+  modeMenu?.setAttribute('aria-hidden', 'true');
+  renderModeMenu();
+}
+modeMenuBtn?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  const open = !modeMenu.classList.contains('open');
+  modeMenu.classList.toggle('open', open);
+  modeMenu.setAttribute('aria-hidden', open ? 'false' : 'true');
+  renderModeMenu();
+});
+modeMenu?.querySelectorAll('.mode-option').forEach((button) => button.addEventListener('click', () => {
+  window.VoiceModes?.setMode(button.dataset.mode);
+  closeModeMenu();
+  renderModelOptions();
+  showToast(`Modo ${button.querySelector('b')?.textContent || button.dataset.mode} activado`, false);
+}));
+window.addEventListener('voice-mode-change', renderModeMenu);
+renderModeMenu();
+
 document.addEventListener('click', (e) => {
   if (sidebar.classList.contains('open') &&
       !sidebar.contains(e.target) &&
       !toggleSidebar.contains(e.target)) {
-    sidebar.classList.remove('open');
+      sidebar.classList.remove('open');
   }
+  if (modeMenu?.classList.contains('open') && !modeMenu.contains(e.target) && !modeMenuBtn.contains(e.target)) closeModeMenu();
 });
 
 newChatBtn.addEventListener('click', () => {
@@ -339,6 +437,7 @@ function renderChatList() {
     // Folder row
     const row = document.createElement('div');
     row.className = 'folder-row' + (isOpen ? ' open' : '');
+    row.dataset.folderId = folder.id;
     row.innerHTML = `
       <span class="folder-chevron">▶</span>
       <span class="folder-emoji">${folder.emoji || '📁'}</span>
@@ -351,16 +450,18 @@ function renderChatList() {
     });
     row.addEventListener('click', (e) => {
       if (e.target.classList.contains('folder-edit')) return;
-      e.stopPropagation(); // prevent sidebar close on mobile
+      e.stopPropagation();
       openFolders.has(folder.id) ? openFolders.delete(folder.id) : openFolders.add(folder.id);
       saveOpenFolders();
       renderChatList();
     });
+    enableDropTarget(row, folder.id);
     chatListEl.appendChild(row);
 
     // Children container
     const children = document.createElement('div');
     children.className = 'folder-children' + (isOpen ? ' open' : '');
+    enableDropTarget(children, folder.id);
 
     folderChats.forEach(chat => {
       children.appendChild(makeChatItem(chat));
@@ -372,7 +473,6 @@ function renderChatList() {
     addBtn.innerHTML = `<span>＋</span> Nuevo chat`;
     addBtn.addEventListener('click', () => {
       const chat = createChat(null, folder.id);
-      // Inherit folder's system prompt
       const fp = getFolder(folder.id)?.systemPrompt || '';
       if (fp) updateChat(chat.id, { systemPrompt: fp });
       openFolders.add(folder.id);
@@ -383,6 +483,13 @@ function renderChatList() {
     children.appendChild(addBtn);
     chatListEl.appendChild(children);
   });
+
+  // Drop zone: move chat back to root (no folder)
+  const rootDrop = document.createElement('div');
+  rootDrop.className = 'root-drop-zone';
+  rootDrop.textContent = 'Soltar aquí = sin carpeta';
+  enableDropTarget(rootDrop, null);
+  chatListEl.appendChild(rootDrop);
 
   // 2. Root chats (no folder)
   const rootChats = chats.filter(c => !c.folderId);
@@ -397,6 +504,14 @@ function makeChatItem(chat) {
   const item = document.createElement('div');
   item.className = 'chat-item' + (chat.id === activeChatId ? ' active' : '');
   item.dataset.id = chat.id;
+  item.draggable = true;
+  item.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('text/chat-id', chat.id);
+    e.dataTransfer.setData('text/plain', chat.id);
+    e.dataTransfer.effectAllowed = 'move';
+    item.classList.add('dragging');
+  });
+  item.addEventListener('dragend', () => item.classList.remove('dragging'));
 
   const emojiEl = document.createElement('span');
   emojiEl.className = 'chat-emoji';
@@ -406,19 +521,21 @@ function makeChatItem(chat) {
   nameEl.className = 'chat-item-name';
   nameEl.textContent = chat.name;
 
-  // ── Inline rename on double-click ──
+  // ── Inline rename on double-click (supports Carpeta/Nombre) ──
   function startRename(e) {
     e.stopPropagation();
     const input = document.createElement('input');
     input.className = 'chat-item-rename';
-    input.value = chat.name;
+    const folder = chat.folderId ? getFolder(chat.folderId) : null;
+    input.value = folder ? `${folder.name}/${chat.name}` : chat.name;
+    input.title = 'Usa Carpeta/Nombre para mover · /Nombre para sacar de carpeta';
+    input.placeholder = 'Carpeta/Nombre del chat';
     nameEl.replaceWith(input);
     input.focus();
     input.select();
 
     function commit() {
-      const newName = input.value.trim() || chat.name;
-      updateChat(chat.id, { name: newName });
+      const newName = applyChatRename(chat.id, input.value);
       if (activeChatId === chat.id) {
         const c = getChat(chat.id);
         chatTitleEl.textContent = (c.emoji !== '💬' ? c.emoji + ' ' : '') + newName;
@@ -437,10 +554,9 @@ function makeChatItem(chat) {
 
   nameEl.addEventListener('dblclick', startRename);
 
-  // pencil button (always visible on active, hover on rest)
   const editBtn = document.createElement('button');
   editBtn.className = 'chat-item-edit';
-  editBtn.title = 'Renombrar';
+  editBtn.title = 'Renombrar (Carpeta/Nombre para mover)';
   editBtn.textContent = '✎';
   editBtn.addEventListener('click', (e) => { e.stopPropagation(); startRename(e); });
 
@@ -523,7 +639,7 @@ function addMessageDOM(role, text, isAudio = false, audioDur = null) {
   labelRow.className = 'message-label-row';
   const label  = document.createElement('div');
   label.className = 'message-label';
-  label.textContent = role === 'user' ? 'Tú' : 'Gemini';
+  label.textContent = role === 'user' ? 'Tú' : (localStorage.getItem('lastResponseProvider') || 'IA');
   labelRow.appendChild(label);
 
   if (role === 'model' && text) {
@@ -534,7 +650,7 @@ function addMessageDOM(role, text, isAudio = false, audioDur = null) {
       <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
     </svg>`;
     ttsBtn.dataset.speaking = 'false';
-    ttsBtn.addEventListener('click', () => ttsToggle(ttsBtn, text));
+     ttsBtn.addEventListener('click', () => ttsToggle(ttsBtn, speechText(text)));
     labelRow.appendChild(ttsBtn);
   }
 
@@ -562,7 +678,7 @@ function addMessageDOM(role, text, isAudio = false, audioDur = null) {
       bubble.appendChild(extra);
     }
   } else {
-    bubble.textContent = text || '';
+    bubble.textContent = role === 'user' ? (text || '') : ((window.VoiceCleanMarkdown || {}).cleanMarkdown ? window.VoiceCleanMarkdown.cleanMarkdown(text || '') : (text || ''));
   }
 
   wrap.appendChild(labelRow);
@@ -576,7 +692,7 @@ function addThinkingDOM() {
   wrap.className = 'message model thinking';
   const label  = document.createElement('div');
   label.className = 'message-label';
-  label.textContent = 'Gemini';
+  label.textContent = localStorage.getItem('selectedModel')?.startsWith('pipeline:') ? 'Whisper + Luna' : 'Gemini';
   const bubble = document.createElement('div');
   bubble.className = 'message-bubble';
   bubble.innerHTML = `Pensando <span class="dots"><span></span><span></span><span></span></span>`;
@@ -623,11 +739,26 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
   const thinking = addThinkingDOM();
 
   try {
-    const body = { sessionId: activeChatId, systemPrompt: chat.systemPrompt || '', model: localStorage.getItem('selectedModel') || 'google:gemini-3.1-flash-lite-preview' };
+    const selectedModel = localStorage.getItem('selectedModel') || 'pipeline:openai/gpt-5.6-luna';
+    const voiceMode = window.VoiceModes?.getMode() || 'long-talk';
+    const isPipeline = selectedModel.startsWith('pipeline:');
+    const body = {
+      sessionId: activeChatId,
+      systemPrompt: chat.systemPrompt || '',
+      model: isPipeline ? selectedModel.slice('pipeline:'.length) : selectedModel,
+      groqApiKey: localStorage.getItem('groqApiKey') || '',
+      openrouterApiKey: localStorage.getItem('openrouterApiKey') || '',
+    };
+    if (voiceMode === 'web' && isPipeline) body.webSearch = true;
     if (text) body.message = text;
-    if (audioBase64) { body.audioBase64 = audioBase64; body.audioMimeType = audioMimeType; }
+    if (audioBase64) {
+      body.audioBase64 = audioBase64;
+      body.audioMimeType = audioMimeType;
+      body.audioDuration = audioDur || 0;
+    }
 
-    const res  = await fetch('/chat', {
+    localStorage.setItem('lastResponseProvider', isPipeline ? 'Whisper + Luna' : (selectedModel.split(':')[0] === 'openrouter' ? 'OpenRouter' : 'Gemini'));
+    const res  = await fetch(isPipeline ? '/pipeline' : '/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -635,7 +766,26 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
     const data = await res.json();
     thinking.remove();
 
-    if (!res.ok) { showToast(data.error || 'Error de Gemini'); return; }
+    if (!res.ok) { showToast(data.error || 'Error procesando el mensaje'); return; }
+
+    if (data.provider) {
+      const modelName = data.provider.model ? ` (${data.provider.model})` : '';
+      localStorage.setItem('lastResponseProvider', `${data.provider.completion}${modelName}`);
+    }
+
+    if (isPipeline && data.transcript && audioBase64) {
+      userMsg.text = data.transcript;
+      updateChat(activeChatId, { messages: chat.messages });
+      const userMessages = messagesEl.querySelectorAll('.message.user');
+      const lastUser = userMessages[userMessages.length - 1];
+      if (lastUser) {
+        const bubble = lastUser.querySelector('.message-bubble');
+        const transcript = document.createElement('div');
+        transcript.className = 'audio-text pipeline-transcript';
+        transcript.textContent = data.transcript;
+        bubble.appendChild(transcript);
+      }
+    }
 
     const modelMsg = { role: 'model', text: data.reply, ts: Date.now() };
     chat.messages.push(modelMsg);
@@ -645,7 +795,7 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
     // Auto-TTS if enabled
     if (autoTts && data.reply) {
       const ttsBtn = msgEl?.querySelector('.btn-tts');
-      if (ttsBtn) ttsToggle(ttsBtn, data.reply);
+       if (ttsBtn) ttsToggle(ttsBtn, speechText(data.reply));
     }
 
   } catch (err) {
@@ -800,6 +950,7 @@ let pendingBlob        = null;
 let pendingMime        = null;
 let pendingDur         = 0;
 let cachedStream       = null;
+const MAX_RECORDING_SECONDS = 90;
 
 function warmMic() {
   if (cachedStream) return;
@@ -815,7 +966,14 @@ function formatTime(s) {
 function startTimer() {
   recSeconds = 0;
   updateTimerUI();
-  timerInterval = setInterval(() => { recSeconds++; updateTimerUI(); }, 1000);
+  timerInterval = setInterval(() => {
+    recSeconds++;
+    updateTimerUI();
+    if (recSeconds >= MAX_RECORDING_SECONDS) {
+      showToast(`Límite de ${MAX_RECORDING_SECONDS} segundos alcanzado`, false);
+      stopRecording(false);
+    }
+  }, 1000);
 }
 
 function stopTimer() { clearInterval(timerInterval); timerInterval = null; }
@@ -886,8 +1044,13 @@ async function beginRecording(mode) {
       }
       try {
         const raw = new Blob(audioChunks, { type: mediaRecorder.mimeType || mimeType || 'audio/webm' });
-        pendingBlob = await blobToWav(raw);
-        pendingMime = 'audio/wav';
+        if (/^audio\/(webm|ogg)/.test(raw.type)) {
+          pendingBlob = raw;
+          pendingMime = raw.type.split(';')[0];
+        } else {
+          pendingBlob = await blobToWav(raw);
+          pendingMime = 'audio/wav';
+        }
         pendingDur = dur;
       } catch (err) {
         showToast('Error al procesar audio: ' + err.message);
@@ -1005,8 +1168,31 @@ function blobToBase64(blob) {
 }
 
 // ── Pointer events on mic button ──
+// When the selected model is the Groq + OpenRouter pipeline, the microphone
+// always uses the shared long recorder (segment transcription, review, send).
+const longRecorder = (window.VoiceLongRecord || {}).createLongRecorder({
+  normalize: true,
+  onSend: (text) => sendMessage(text),
+});
+function isLongMode() {
+  const mode = window.VoiceModes?.getMode();
+  if (mode) return mode === 'long-talk' || mode === 'web';
+  return (localStorage.getItem('selectedModel') || DEFAULT_MODEL).startsWith('pipeline:');
+}
+let longJustStarted = false;
+
 recordBtn.addEventListener('pointerdown', (e) => {
   e.preventDefault();
+  if (isLongMode()) {
+    longJustStarted = false;
+    if (longRecorder.isReady()) { longRecorder.send(); }
+    else if (longRecorder.isRecording() || longRecorder.isPaused()) { longRecorder.togglePause(); }
+    else if (!longRecorder.isRecording()) {
+      longRecorder.begin();
+      longJustStarted = true;
+    }
+    return;
+  }
   // If already in toggle mode and recording → second tap = stop recording (goes to review)
   if (isRecording && recordingMode === 'toggle') {
     stopRecording(false);
@@ -1029,6 +1215,9 @@ recordBtn.addEventListener('pointerdown', (e) => {
 });
 
 recordBtn.addEventListener('pointermove', (e) => {
+  if (isLongMode()) {
+    return;
+  }
   if (!holdTimer && isRecording && recordingMode === 'hold') {
     const dy = e.clientY - pointerDownY;
     if (dy < LOCK_THRESHOLD) {
@@ -1040,6 +1229,10 @@ recordBtn.addEventListener('pointermove', (e) => {
 
 recordBtn.addEventListener('pointerup', (e) => {
   e.preventDefault();
+  if (isLongMode()) {
+    if (longJustStarted) { longJustStarted = false; return; }
+    return;
+  }
   if (holdTimer) {
     clearTimeout(holdTimer);
     holdTimer = null;
@@ -1052,6 +1245,7 @@ recordBtn.addEventListener('pointerup', (e) => {
 });
 
 recordBtn.addEventListener('pointercancel', () => {
+  if (isLongMode()) { return; }
   if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
   if (isRecording && recordingMode === 'hold') stopRecording(false);
 });
@@ -1094,24 +1288,56 @@ document.addEventListener('keydown', (e) => {
 // ═══════════════════════════════════════════════
 const tts = window.speechSynthesis;
 let activeTtsBtn = null;
+let activeTtsAudio = null;
+const DEFAULT_TTS_VOICE = 'es-MX-JorgeNeural';
+const SYSTEM_TTS_VOICE = 'system';
+
+function speechText(value) {
+  const cleaner = window.VoiceCleanMarkdown?.cleanMarkdown;
+  let result = cleaner ? cleaner(value || '') : String(value || '');
+  return result.replace(/[*_`~#>|]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function resetTtsButton(btn) {
+  if (!btn) return;
+  btn.classList.remove('speaking');
+  btn.dataset.speaking = 'false';
+  btn.title = 'Escuchar';
+  btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>`;
+}
 
 function ttsToggle(btn, text) {
-  // If something is already speaking, stop it
-  if (tts.speaking) {
+  if ((activeTtsAudio && !activeTtsAudio.ended) || tts.speaking) {
+    if (activeTtsAudio) activeTtsAudio.pause();
     tts.cancel();
-    if (activeTtsBtn) {
-      activeTtsBtn.classList.remove('speaking');
-      activeTtsBtn.dataset.speaking = 'false';
-      activeTtsBtn.title = 'Escuchar';
-    }
-    // If we clicked the same button that was speaking, just stop
-    if (activeTtsBtn === btn) {
-      activeTtsBtn = null;
-      return;
-    }
+    resetTtsButton(activeTtsBtn);
+    const same = activeTtsBtn === btn;
+    activeTtsAudio = null;
+    activeTtsBtn = null;
+    if (same) return;
   }
 
-  // Start speaking
+  const voice = localStorage.getItem('ttsVoice') || DEFAULT_TTS_VOICE;
+  if (voice !== SYSTEM_TTS_VOICE) {
+    const url = '/tts?voice=' + encodeURIComponent(voice) + '&format=mp3&text=' + encodeURIComponent(text.slice(0, 800));
+    const audio = new Audio(url);
+    activeTtsAudio = audio;
+    activeTtsBtn = btn;
+    audio.onplay = () => { btn.classList.add('speaking'); btn.dataset.speaking = 'true'; btn.title = 'Detener'; };
+    audio.onended = () => { resetTtsButton(btn); if (activeTtsAudio === audio) { activeTtsAudio = null; activeTtsBtn = null; } };
+    audio.onerror = () => {
+      if (activeTtsAudio !== audio) return;
+      activeTtsAudio = null;
+      resetTtsButton(btn);
+      speakWithSystem(btn, text);
+    };
+    audio.play().catch(() => { if (activeTtsAudio === audio) { activeTtsAudio = null; resetTtsButton(btn); speakWithSystem(btn, text); } });
+    return;
+  }
+  speakWithSystem(btn, text);
+}
+
+function speakWithSystem(btn, text) {
   const utt = new SpeechSynthesisUtterance(text);
   utt.rate  = 1.1;   // slightly faster = more natural for quick responses
   utt.pitch = 1;
@@ -1127,12 +1353,7 @@ function ttsToggle(btn, text) {
     </svg>`;
   };
   utt.onend = utt.onerror = () => {
-    btn.classList.remove('speaking');
-    btn.dataset.speaking = 'false';
-    btn.title = 'Escuchar';
-    btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="15" height="15">
-      <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
-    </svg>`;
+    resetTtsButton(btn);
     if (activeTtsBtn === btn) activeTtsBtn = null;
   };
 
@@ -1150,12 +1371,15 @@ ttsAutoBtn.addEventListener('click', () => {
   autoTts = !autoTts;
   localStorage.setItem('autoTts', autoTts);
   updateTtsAutoBtn();
-  if (!autoTts && tts.speaking) tts.cancel();
+  if (!autoTts) { if (tts.speaking) tts.cancel(); if (activeTtsAudio) activeTtsAudio.pause(); }
 });
 
 // Stop TTS when switching chats
 function ttsStop() {
   if (tts.speaking) tts.cancel();
+  if (activeTtsAudio) activeTtsAudio.pause();
+  resetTtsButton(activeTtsBtn);
+  activeTtsAudio = null;
   activeTtsBtn = null;
 }
 
@@ -1223,12 +1447,13 @@ if (syncPullBtn) syncPullBtn.addEventListener('click', async () => {
 });
 
 // ── Global settings modal (model selector) ──
-const DEFAULT_MODEL = 'google:gemini-3.1-flash-lite-preview';
+const DEFAULT_MODEL = 'pipeline:openai/gpt-5.6-luna';
 const BUILTIN_MODELS = [
   { value: 'google:gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite', tag: 'Google' },
   { value: 'openrouter:google/gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite', tag: 'OpenRouter' },
   { value: 'openrouter:google/gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', tag: 'OpenRouter' },
   { value: 'openrouter:google/gemini-3-flash-preview', name: 'Gemini 3 Flash', tag: 'OpenRouter' },
+  { value: 'pipeline:openai/gpt-5.6-luna', name: 'Whisper large turbo + GPT-5.6 Luna', tag: 'Pipeline' },
 ];
 
 const globalSettingsBtn   = document.getElementById('globalSettingsBtn');
@@ -1240,6 +1465,9 @@ const addModelProvider    = document.getElementById('addModelProvider');
 const addModelId          = document.getElementById('addModelId');
 const addModelBtn         = document.getElementById('addModelBtn');
 const addModelHint        = document.getElementById('addModelHint');
+const groqApiKeyInput     = document.getElementById('groqApiKey');
+const openrouterApiKeyInput = document.getElementById('openrouterApiKey');
+const ttsVoiceInput       = document.getElementById('ttsVoice');
 
 function loadCustomModels() {
   try { return JSON.parse(localStorage.getItem('customModels') || '[]'); } catch { return []; }
@@ -1253,14 +1481,19 @@ function modelLabel(id) {
   return bare.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+function modelAllowedForMode(value) {
+  const mode = window.VoiceModes?.getMode() || 'long-talk';
+  return mode === 'gemini' ? !value.startsWith('pipeline:') : value.startsWith('pipeline:');
+}
+
 function renderModelOptions() {
   if (!modelOptionsEl) return;
   const current = localStorage.getItem('selectedModel') || DEFAULT_MODEL;
   const customs = loadCustomModels();
-  const all = [
-    ...BUILTIN_MODELS.map(m => ({ ...m, custom: false })),
-    ...customs.map(m => ({ ...m, custom: true })),
-  ];
+   const all = [
+     ...BUILTIN_MODELS.map(m => ({ ...m, custom: false })),
+     ...customs.map(m => ({ ...m, custom: true })),
+   ].filter(m => modelAllowedForMode(m.value));
   modelOptionsEl.innerHTML = all.map(m => `
     <label class="model-option">
       <input type="radio" name="aiModel" value="${m.value}" ${m.value === current ? 'checked' : ''} />
@@ -1276,6 +1509,9 @@ function updateAddModelHint() {
   if (addModelProvider.value === 'google') {
     addModelHint.textContent = 'Google API: ej. gemini-2.5-flash';
     if (addModelId) addModelId.placeholder = 'gemini-2.5-flash';
+  } else if (addModelProvider.value === 'pipeline') {
+    addModelHint.textContent = 'Pipeline: modelo de texto OpenRouter, ej. openai/gpt-5.6-luna';
+    if (addModelId) addModelId.placeholder = 'openai/gpt-5.6-luna';
   } else {
     addModelHint.textContent = 'OpenRouter: ej. google/gemini-2.5-pro';
     if (addModelId) addModelId.placeholder = 'google/gemini-2.5-pro';
@@ -1285,6 +1521,9 @@ function updateAddModelHint() {
 function openGlobalSettings() {
   renderModelOptions();
   updateAddModelHint();
+  if (groqApiKeyInput) groqApiKeyInput.value = localStorage.getItem('groqApiKey') || '';
+  if (openrouterApiKeyInput) openrouterApiKeyInput.value = localStorage.getItem('openrouterApiKey') || '';
+  if (ttsVoiceInput) ttsVoiceInput.value = localStorage.getItem('ttsVoice') || DEFAULT_TTS_VOICE;
   globalSettingsModal.classList.add('open');
 }
 
@@ -1323,7 +1562,7 @@ if (addModelBtn) addModelBtn.addEventListener('click', () => {
   customs.push({
     value,
     name: modelLabel(id),
-    tag: finalProvider === 'google' ? 'Google' : 'OpenRouter',
+    tag: finalProvider === 'google' ? 'Google' : finalProvider === 'pipeline' ? 'Pipeline' : 'OpenRouter',
   });
   saveCustomModels(customs);
   localStorage.setItem('selectedModel', value);
@@ -1335,9 +1574,12 @@ if (addModelBtn) addModelBtn.addEventListener('click', () => {
 if (saveGlobalSettings) saveGlobalSettings.addEventListener('click', () => {
   const selected = globalSettingsModal.querySelector('input[name="aiModel"]:checked');
   if (selected) {
-    localStorage.setItem('selectedModel', selected.value);
+    if (modelAllowedForMode(selected.value)) localStorage.setItem('selectedModel', selected.value);
     showToast('Modelo guardado', false);
   }
+  if (groqApiKeyInput) localStorage.setItem('groqApiKey', groqApiKeyInput.value.trim());
+  if (openrouterApiKeyInput) localStorage.setItem('openrouterApiKey', openrouterApiKeyInput.value.trim());
+  if (ttsVoiceInput) localStorage.setItem('ttsVoice', ttsVoiceInput.value);
   globalSettingsModal.classList.remove('open');
 });
 
@@ -1387,9 +1629,10 @@ if (linkDeviceModal) linkDeviceModal.addEventListener('click', (e) => {
 
 // ── Confirm link: switch to the other device's ID and pull its data ──
 if (confirmLinkBtn) confirmLinkBtn.addEventListener('click', async () => {
-  const newId = linkDeviceInput.value.trim();
-  if (!newId) { showToast('Pega un ID válido'); return; }
-  if (newId === DEVICE_ID) { showToast('Ya estás usando ese ID', false); linkDeviceModal.classList.remove('open'); return; }
+  const newId = linkDeviceInput.value.trim().toLowerCase().replace(/\s+/g, '_');
+  if (!newId) { showToast('Escribe un username válido'); return; }
+  if (!/^[a-z0-9_-]{3,40}$/.test(newId)) { showToast('Usa 3-40 caracteres: letras, números, guion o guion bajo'); return; }
+  if (newId === DEVICE_ID) { showToast('Ya estás usando ese username', false); linkDeviceModal.classList.remove('open'); return; }
 
   linkDeviceModal.classList.remove('open');
   showToast('Sincronizando…', false);
@@ -1403,6 +1646,7 @@ if (confirmLinkBtn) confirmLinkBtn.addEventListener('click', async () => {
     // Switch device ID globally
     DEVICE_ID = newId;
     localStorage.setItem('deviceId', DEVICE_ID);
+    localStorage.setItem('voiceUsername', DEVICE_ID);
     refreshDeviceIdUI();
 
     // Upload local folders + chats with the new device_id
@@ -1435,8 +1679,9 @@ if (confirmLinkBtn) confirmLinkBtn.addEventListener('click', async () => {
 // ── Reset: generate a brand-new device ID ──
 if (resetDeviceBtn) resetDeviceBtn.addEventListener('click', () => {
   if (!confirm('¿Generar un nuevo ID? Perderás la sincronización con el ID actual.')) return;
-  DEVICE_ID = 'dev_' + Math.random().toString(36).slice(2, 10);
+  DEVICE_ID = 'usuario_' + Math.random().toString(36).slice(2, 8);
   localStorage.setItem('deviceId', DEVICE_ID);
+  localStorage.setItem('voiceUsername', DEVICE_ID);
   linkDeviceModal.classList.remove('open');
   refreshDeviceIdUI();
   showToast('Nuevo ID generado', false);

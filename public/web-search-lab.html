@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Web Search Lab</title>
+  <link rel="stylesheet" href="web-search-lab.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">ISOLATED BROWSER LAB / PIPELINE</p>
+        <h1>Search or no search.<br><em>Same question.</em></h1>
+        <p class="lede">Run a controlled comparison against the pipeline. Text stays in this tab; microphone audio is sent for transcription and then discarded.</p>
+      </div>
+      <div class="mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+    </header>
+
+    <section class="card prompt-card">
+      <div class="section-top"><div><p class="kicker">01 / INPUT</p><h2>Give the model a question</h2></div><span class="badge" id="state">READY</span></div>
+      <div class="prompt-tools">
+        <select id="promptPreset" aria-label="Test prompt">
+          <option value="current">Current: What are the biggest technology stories today?</option>
+          <option value="timeless">Timeless: Explain why the sky is blue to a curious child.</option>
+        </select>
+        <button class="quiet" id="loadPrompt">Load test prompt</button>
+      </div>
+      <textarea id="prompt" rows="4" placeholder="Type a prompt, or record a short one..."></textarea>
+      <div class="input-row">
+        <button class="record" id="record" type="button"><span class="mic-dot"></span><span id="recordLabel">Record prompt</span><span class="timer" id="timer">0:00</span></button>
+        <span class="record-note">Short audio only. Max 30 seconds.</span>
+      </div>
+      <div class="transcript-box"><div class="label-row"><span>TRANSCRIPT</span><span id="transcriptStatus">No audio yet</span></div><output id="transcript" class="muted">Your Groq transcript will appear here.</output></div>
+      <div class="options">
+        <span class="comparison-note">Both modes always use the exact same prompt for a fair comparison.</span>
+        <span class="privacy">Audio is never stored in localStorage.</span>
+      </div>
+      <div class="actions">
+        <button class="primary" id="runNoSearch">Run without search</button>
+        <button class="search" id="runSearch">Run with search</button>
+        <button class="compare" id="runBoth">Run both comparison</button>
+        <button class="quiet" id="clear">Clear</button>
+      </div>
+      <p class="error" id="error" role="alert" hidden></p>
+    </section>
+
+    <section class="results" id="results" aria-live="polite"></section>
+    <footer><span>WEB SEARCH LAB</span><span>/</span><span>POSTS TO <code>/transcribe</code> AND <code>/pipeline</code></span></footer>
+  </main>
+  <script src="web-search-lab.js"></script>
+</body>
+</html>

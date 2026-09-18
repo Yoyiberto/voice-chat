@@ -7,6 +7,7 @@
   <meta name="sb-anon" content="sb_publishable_vnxuz81zBXbbt9j00CLXAA_lKV1rLyD" />
   <title>Voice Chat</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="long-record.css" />
 </head>
 <body>
 
@@ -30,6 +31,9 @@
             <path d="M19 3H5c-1.1 0-2 .9-2 2v14l4-4h12c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 3c.55 0 1 .45 1 1v3h3c.55 0 1 .45 1 1s-.45 1-1 1h-3v3c0 .55-.45 1-1 1s-1-.45-1-1v-3H8c-.55 0-1-.45-1-1s.45-1 1-1h3V7c0-.55.45-1 1-1z"/>
           </svg>
         </button>
+        <a class="btn-icon btn-icon-long" href="chat-long.html" title="Chat largo">∞</a>
+        <a class="btn-icon" href="chunk-transcription-lab.html" title="Laboratorio de chunks">CL</a>
+        <a class="btn-icon" href="tts-lab.html" title="Voz lab (salida)">♪</a>
       </div>
     </div>
     <div class="chat-list" id="chatList"></div>
@@ -57,7 +61,7 @@
         </button>
       </div>
       <div class="device-id-row">
-        <span class="sidebar-footer-label" style="flex:1">ID: </span>
+        <span class="sidebar-footer-label" style="flex:1">Usuario: </span>
         <span class="device-id-value" id="deviceIdDisplay"></span>
         <button class="btn-copy-device" id="copyDeviceId" title="Copiar ID">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="13" height="13">
@@ -72,11 +76,11 @@
   <div class="modal-overlay" id="linkDeviceModal">
     <div class="modal">
       <div class="modal-header">
-        <span>Sincronizar dispositivos</span>
+        <span>Configurar usuario para sincronizar</span>
         <button class="modal-close" id="closeLinkDevice">✕</button>
       </div>
       <div class="modal-field">
-        <label class="modal-label">Tu ID actual</label>
+        <label class="modal-label">Tu usuario actual</label>
         <div class="device-id-row" style="margin-bottom:12px">
           <span class="device-id-value" id="linkModalCurrentId"></span>
           <button class="btn-copy-device" id="linkModalCopyBtn" title="Copiar">
@@ -85,13 +89,13 @@
             </svg>
           </button>
         </div>
-        <label class="modal-label">Pega el ID del otro dispositivo</label>
-        <input type="text" id="linkDeviceInput" class="modal-input" placeholder="dev_xxxxxxxx" autocomplete="off" autocorrect="off" spellcheck="false" />
-        <p class="device-id-hint" style="margin-top:6px">Al confirmar, este dispositivo usará ese ID y descargará todos sus chats.</p>
+        <label class="modal-label">Escribe el mismo username en tus dispositivos</label>
+        <input type="text" id="linkDeviceInput" class="modal-input" placeholder="mi_usuario" autocomplete="off" autocorrect="off" spellcheck="false" />
+        <p class="device-id-hint" style="margin-top:6px">No es autenticación real: cualquiera que conozca este username podría ver sus chats.</p>
       </div>
       <div class="modal-actions">
-        <button id="confirmLinkDevice">Vincular y sincronizar</button>
-        <button id="resetDeviceId" class="btn-danger">Generar nuevo ID</button>
+          <button id="confirmLinkDevice">Usar usuario y sincronizar</button>
+          <button id="resetDeviceId" class="btn-danger">Generar usuario nuevo</button>
       </div>
     </div>
   </div>
@@ -105,6 +109,9 @@
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
           <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
         </svg>
+      </button>
+      <button class="btn-mode-menu" id="modeMenuBtn" title="Modos de conversación" aria-label="Modos de conversación" aria-expanded="false">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="19" height="19"><path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z"/></svg>
       </button>
       <span class="topbar-title" id="chatTitle">Nuevo chat</span>
       <button class="btn-tts-auto" id="ttsAutoBtn" title="Reproducir respuestas automáticamente">
@@ -124,6 +131,15 @@
       </button>
     </div>
 
+    <div class="mode-menu" id="modeMenu" aria-hidden="true">
+      <div class="mode-menu-title">Modo de conversación</div>
+      <button class="mode-option" data-mode="long-talk" type="button"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 13h2v-2H4v2zm4 4h2V7H8v10zm4 3h2V4h-2v16zm4-3h2V7h-2v10zm4-4h2v-2h-2v2z"/></svg><span><b>Long talk</b><small>Chunks incrementales</small></span></button>
+      <button class="mode-option" data-mode="web" type="button"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm6.92 9h-3.06a15.7 15.7 0 0 0-1.1-5.1A8.03 8.03 0 0 1 18.92 11zM12 4c.83 1.2 1.55 3.1 1.82 5h-3.64C10.45 7.1 11.17 5.2 12 4zM9.24 5.9A15.7 15.7 0 0 0 8.14 11H5.08a8.03 8.03 0 0 1 4.16-5.1zM5.08 13h3.06c.13 1.87.52 3.64 1.1 5.1A8.03 8.03 0 0 1 5.08 13zm4.1 0h5.64c-.27 1.9-.99 3.8-1.82 5-.83-1.2-1.55-3.1-1.82-5zm5.58 5.1c.58-1.46.97-3.23 1.1-5.1h3.06a8.03 8.03 0 0 1-4.16 5.1z"/></svg><span><b>Web</b><small>Reflexión + búsqueda</small></span></button>
+      <button class="mode-option" data-mode="no-cut" type="button"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.27 4.28 4 20 19.72 18.73 21l-3.1-3.1c-.45.07-.91.1-1.38.1-2.2 0-4.18-.9-5.62-2.35L5.5 19H3l4.06-4.06A7.96 7.96 0 0 1 5 12c0-1.07.21-2.09.6-3.03L3 6.27V5.27zm6.32 5.9A5.98 5.98 0 0 0 8 12c0 1.08.29 2.1.8 2.98l1.43-1.43a4 4 0 0 1-.23-1.55c0-.38.06-.75.16-1.1l-.84-.73zM12 4c2.2 0 4.18.9 5.62 2.35L20.5 3.5H23l-4.06 4.06A7.96 7.96 0 0 1 19 12c0 1.07-.21 2.09-.6 3.03l-1.5-1.5c.07-.5.1-1.01.1-1.53 0-1.85-.84-3.5-2.18-4.62L13.5 8.7c.31.35.54.76.67 1.2L12.7 11.37A4 4 0 0 1 12 10c0-.64.15-1.24.42-1.78L9.3 5.1A8.03 8.03 0 0 1 12 4z"/></svg><span><b>No cut</b><small>Audio completo</small></span></button>
+      <button class="mode-option" data-mode="gemini" type="button"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2 1.8 7.2L21 11l-7.2 1.8L12 20l-1.8-7.2L3 11l7.2-1.8L12 2zm7 15 .7 2.3L22 20l-2.3.7L19 23l-.7-2.3L16 20l2.3-.7L19 17z"/></svg><span><b>Gemini</b><small>Modelo Gemini directo</small></span></button>
+      <a class="mode-lab-link" href="flow-lab.html">Abrir Flow Lab experimental →</a>
+    </div>
+
     <!-- Global settings modal (model selector) -->
     <div class="modal-overlay" id="globalSettingsModal">
       <div class="modal">
@@ -131,19 +147,40 @@
           <span>Configuración global</span>
           <button class="modal-close" id="closeGlobalSettings">✕</button>
         </div>
-        <div class="modal-field">
-          <label class="modal-label">Modelo de IA</label>
+          <div class="modal-field">
+            <label class="modal-label">Modelo de IA</label>
           <div class="model-options" id="modelOptions"></div>
           <div class="add-model-row">
             <select id="addModelProvider" class="modal-input add-model-provider">
               <option value="google">Google</option>
               <option value="openrouter">OpenRouter</option>
+              <option value="pipeline">Pipeline</option>
             </select>
             <input type="text" id="addModelId" class="modal-input" placeholder="ID del modelo (ej. gemini-2.5-flash)" />
             <button type="button" id="addModelBtn" class="btn-add-model">Agregar</button>
           </div>
-          <p class="add-model-hint" id="addModelHint">Google API: solo el nombre del modelo</p>
-        </div>
+            <p class="add-model-hint" id="addModelHint">Google API: solo el nombre del modelo</p>
+            <p class="pipeline-hint">Pipeline: Groq Whisper + OpenRouter para audio y texto.</p>
+          </div>
+          <div class="modal-field">
+            <label class="modal-label" for="ttsVoice">Voz de respuestas</label>
+            <select id="ttsVoice" class="modal-input">
+              <option value="es-MX-JorgeNeural">Microsoft Edge — Jorge (México)</option>
+              <option value="es-ES-AlvaroNeural">Microsoft Edge — Álvaro (España)</option>
+              <option value="es-ES-ElviraNeural">Microsoft Edge — Elvira (España)</option>
+              <option value="es-ES-XimenaNeural">Microsoft Edge — Ximena (España)</option>
+              <option value="system">Sistema — Web Speech</option>
+            </select>
+            <p class="pipeline-hint">Se guarda en este navegador. Edge requiere conexión; Sistema sirve como respaldo.</p>
+          </div>
+          <div class="modal-field api-keys-field">
+            <label class="modal-label">Claves API</label>
+            <p class="api-key-warning">Se guardan solo en este navegador y se envían al servidor con cada solicitud.</p>
+            <label class="api-key-label" for="groqApiKey">Groq API Key</label>
+            <input type="password" id="groqApiKey" class="modal-input" placeholder="gsk_..." autocomplete="off" />
+            <label class="api-key-label" for="openrouterApiKey">OpenRouter API Key</label>
+            <input type="password" id="openrouterApiKey" class="modal-input" placeholder="sk-or-v1-..." autocomplete="off" />
+          </div>
         <div class="modal-actions">
           <button id="saveGlobalSettings">Guardar</button>
         </div>
@@ -276,6 +313,10 @@
 
   </div>
 
-  <script src="app.js"></script>
+  <script src="markdown.js"></script>
+  <script src="normalize-audio.js"></script>
+  <script src="long-record.js"></script>
+  <script src="flow-modes.js"></script>
+  <script src="app.js?v=20260815-simple-sync-debug"></script>
 </body>
 </html>

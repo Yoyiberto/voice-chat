@@ -1,0 +1,15 @@
+name = "voice-chat-d1-lab"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+
+# Local D1 works immediately. Add the real database_id only after creating
+# the remote database with: npx wrangler d1 create voice-chat-d1
+[[d1_databases]]
+binding = "DB"
+database_name = "voice-chat-d1"
+database_id = "local-only-replace-after-create"
+migrations_dir = "migrations"
+
+[vars]
+# Optional local test protection. Set D1_TEST_TOKEN in .dev.vars to enable it.
+D1_TEST_OWNER = "local-test-user"

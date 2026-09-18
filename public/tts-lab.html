@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>TTS Lab — Voces</title>
+  <link rel="stylesheet" href="tts-lab.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <a class="back" href="index.html">← App principal</a>
+      <p class="eyebrow">TTS LAB / OUTPUT VOICES</p>
+      <h1>Prueba voces de salida.<br><em>Gratis y para español.</em></h1>
+      <p class="lede">Compara voces del sistema (Microsoft/Google), voces neurales de Microsoft Edge vía tu servidor, y Piper local en el navegador. Todas gratuitas.</p>
+      <div class="controls">
+        <textarea id="sample" rows="2">Hola, soy una voz de prueba. Esto es español, y suena natural y claro.</textarea>
+        <div class="vol-row">
+          <label>Volumen</label>
+          <input id="volume" type="range" min="0" max="1" step="0.05" value="1" />
+          <span id="volumeVal" class="timer">100%</span>
+        </div>
+        <button class="quiet" id="stopAllBtn">Detener todo</button>
+      </div>
+    </header>
+    <p class="error" id="error"></p>
+
+    <section class="card">
+      <div class="section-top"><div><p class="kicker">01 / SISTEMA (Web Speech)</p><h2>Voces ya instaladas</h2></div><span class="badge" id="nativeBadge">—</span></div>
+      <p class="note">Son las voces que expone el navegador y que usa la app principal por defecto (es-ES). El 100% ya es el máximo de Web Speech: el navegador no permite amplificar esta salida por encima de 1. Si suena bajo, sube el volumen multimedia del sistema o usa Edge/Piper, que sí admiten ganancia.</p>
+      <div class="voice-list" id="nativeList"></div>
+    </section>
+
+    <section class="card">
+      <div class="section-top"><div><p class="kicker">02 / MICROSOFT EDGE (neural)</p><h2>Vía el servidor</h2></div><span class="badge" id="edgeBadge">—</span></div>
+      <p class="note">Voces neurales de alta calidad (gratis, sin API key). El audio se genera en tu servidor y aquí solo se reproduce, así que funciona en móvil. Requiere red.</p>
+      <div class="voice-list" id="edgeList"></div>
+    </section>
+
+    <section class="card">
+      <div class="section-top"><div><p class="kicker">03 / PIPER (local offline)</p><h2>En el navegador</h2></div><span class="badge" id="piperBadge">—</span></div>
+      <p class="note">Neural que corre 100% local (WASM). El modelo incluido está en <code>public/piper/</code> y se carga al pulsar la voz local. Para el móvil, sirve esta misma app y no necesita descargarlo otra vez; también puedes cargar un modelo y su config manualmente.</p>
+      <div class="piper-row">
+        <label class="file-label">Cargar modelo .onnx<input type="file" id="piperOnnx" accept=".onnx" /></label>
+        <label class="file-label">Cargar config .json<input type="file" id="piperJson" accept=".json" /></label>
+        <button class="quiet" id="loadPiperDemo" type="button">Usar voces de muestra (demo)</button>
+      </div>
+      <div class="voice-list" id="piperList"></div>
+    </section>
+
+    <footer><span>TTS LAB</span><span>/</span><span>MICROSOFT EDGE · WEB SPEECH · PIPER</span></footer>
+  </main>
+  <script src="tts-lab.js"></script>
+</body>
+</html>

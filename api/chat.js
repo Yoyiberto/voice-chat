@@ -2,13 +2,26 @@ const DEFAULT_MODEL = 'google:gemini-3.1-flash-lite-preview';
 
 // In-memory sessions (resets on cold start, acceptable for personal use)
 const sessions = {};
+const WEB_SEARCH_OPTIONS = ['engine', 'max_results', 'max_uses', 'max_total_results', 'allowed_domains', 'excluded_domains'];
+
+function webSearchRequest(enabled, options) {
+  if (enabled !== true) return {};
+  const parameters = {};
+  for (const key of WEB_SEARCH_OPTIONS) {
+    if (options?.[key] !== undefined) parameters[key] = options[key];
+  }
+  return {
+    tools: [{ type: 'openrouter:web_search', parameters }],
+    max_tool_calls: Number.isInteger(parameters.max_uses) ? parameters.max_uses : 1,
+  };
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { sessionId, message, audioBase64, audioMimeType, systemPrompt, model } = req.body;
+  const { sessionId, message, audioBase64, audioMimeType, systemPrompt, model, openrouterApiKey, webSearch, webSearchOptions } = req.body;
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
 
   // Parse "provider:modelId" — default to Google if omitted
@@ -67,7 +80,7 @@ export default async function handler(req, res) {
 
   // ── OpenRouter (OpenAI-compatible) ────────────────────────────────────────
   if (provider === 'openrouter') {
-    const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+    const OPENROUTER_API_KEY = openrouterApiKey || process.env.OPENROUTER_API_KEY;
     if (!OPENROUTER_API_KEY) return res.status(500).json({ error: 'OPENROUTER_API_KEY not configured' });
 
     if (!message && !audioBase64) return res.status(400).json({ error: 'No content' });
@@ -121,7 +134,8 @@ export default async function handler(req, res) {
           model: modelId,
           messages,
           temperature: 1,
-          max_tokens: 2048
+           max_tokens: 2048,
+           ...webSearchRequest(webSearch, webSearchOptions)
         })
       });
       const data = await apiRes.json();
@@ -135,7 +149,18 @@ export default async function handler(req, res) {
       if (!replyText) { sessions[sessionId].pop(); return res.status(500).json({ error: 'Empty response' }); }
 
       sessions[sessionId].push({ role: 'model', parts: [{ text: replyText }] });
-      return res.json({ reply: replyText });
+       return res.json({
+         reply: replyText,
+         provider: {
+           completion: 'OpenRouter',
+           model: modelId,
+           webSearch: webSearch === true,
+           searchRequests: data.usage?.server_tool_use?.web_search_requests || 0,
+           citations: data.choices?.[0]?.message?.annotations || [],
+           usage: data.usage || null,
+           rawResponse: data,
+         },
+       });
 
     } catch (err) {
       sessions[sessionId].pop();

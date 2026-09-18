@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Audio Lab</title>
+  <link rel="stylesheet" href="audio-lab.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">AUDIO LAB / MOBILE VS DESKTOP</p>
+        <h1>Piensa el audio.<br><em>Compara la transcripción.</em></h1>
+        <p class="lede">Graba con el micrófono y genera varias variantes de preprocesamiento (crudo, 16 kHz, ganancias, normalización). Cada una se transcribe con Groq para elegir la mejor en tu dispositivo.</p>
+      </div>
+      <a class="back" href="index.html">← App principal</a>
+      <a class="back" href="chunk-transcription-lab.html">Chunk transcription lab →</a>
+    </header>
+
+    <section class="card" id="recordCard">
+      <div class="section-top"><div><p class="kicker">01 / GRABAR</p><h2>Captura el audio</h2></div><span class="badge" id="state">READY</span></div>
+      <div class="record-row">
+        <button class="record" id="recordBtn" type="button"><span class="mic-dot"></span><span id="recordLabel">Grabar</span></button>
+        <span id="recordTimer" class="timer">0:00</span>
+        <span class="record-note">Hasta 30 s por ahora.</span>
+      </div>
+      <div class="metrics" id="metrics"></div>
+      <p class="error" id="error" role="alert"></p>
+      <div class="actions">
+        <button class="primary" id="runVariantsBtn" disabled>Transcribir todas las variantes</button>
+        <button class="quiet" id="clearBtn">Limpiar</button>
+      </div>
+    </section>
+
+    <section class="results" id="results"></section>
+
+    <footer><span>AUDIO LAB</span><span>/</span><span>POSTS SOLO A /transcribe (Groq)</span></footer>
+  </main>
+  <script src="markdown.js"></script>
+  <script src="normalize-audio.js"></script>
+  <script src="audio-lab.js"></script>
+</body>
+</html>

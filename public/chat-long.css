@@ -1,0 +1,33 @@
+.link-main { color: var(--accent, #2563eb); text-decoration: none; font-weight: 600; }
+.chat-item { padding: 9px 12px; border-radius: 10px; cursor: pointer; font-size: 13px; color: var(--text, #1f2937); }
+.chat-item:hover { background: var(--hover, #eef2f7); }
+.chat-item.active { background: var(--accent-soft, #e0ecff); font-weight: 600; }
+.chat-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-row { padding: 8px 12px 2px; font-size: 11px; font-weight: 700; color: var(--text-muted, #6b7280); text-transform: uppercase; letter-spacing: .03em; }
+.empty-hint { padding: 14px; color: var(--text-muted, #6b7280); font-size: 12px; }
+
+.sidebar-footer { padding: 10px 12px; }
+.link-main:hover { text-decoration: underline; }
+
+.composer { display: flex; align-items: flex-end; gap: 8px; padding: 12px 14px 18px; border-top: 1px solid var(--line, #e5e7eb); background: var(--bg, #fff); }
+.composer textarea { flex: 1; resize: none; border: 1px solid var(--line, #d1d5db); border-radius: 14px; padding: 12px 14px; font: inherit; line-height: 1.45; outline: none; max-height: 120px; }
+.btn-record-long { font-size: 20px; border: 1px solid var(--line, #d1d5db); border-radius: 14px; background: var(--accent, #2563eb); color: #fff; cursor: pointer; padding: 11px 16px; }
+.btn-record-long:hover { filter: brightness(1.05); }
+.btn-send-text { font-size: 16px; border: 1px solid var(--line, #d1d5db); border-radius: 14px; background: var(--accent, #2563eb); color: #fff; cursor: pointer; padding: 11px 16px; }
+
+#settingsModal.open { display: flex; }
+
+#recOverlay { padding: 22px; }
+#recOverlay .modal { max-width: 640px; }
+.rec-timer { font: 600 30px 'DM Mono', monospace; color: var(--accent, #2563eb); text-align: center; }
+.rec-status { text-align: center; font: 500 12px 'DM Mono', monospace; color: var(--text-muted, #6b7280); margin: 6px 0 12px; }
+.rec-segments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; min-height: 26px; }
+.seg { font: 500 11px 'DM Mono', monospace; background: #eef2f7; border-radius: 8px; padding: 4px 8px; white-space: nowrap; }
+.seg.done { background: #d6f5e3; color: #0b6e3d; }
+.seg.failed { background: #ffe1e1; color: #b42318; }
+.seg.uploading, .seg.recording, .seg.todo { background: #e0ecff; color: #1d4ed8; }
+.seg button { border: 0; background: transparent; color: #b42318; margin-left: 4px; cursor: pointer; font: 600 11px inherit; text-decoration: underline; }
+.rec-transcript-wrap { margin-bottom: 14px; }
+.rec-transcript-label { font: 600 10px 'DM Mono', monospace; color: var(--text-muted, #6b7280); margin-bottom: 6px; letter-spacing: .05em; }
+.rec-transcript { width: 100%; border: 1px solid var(--line, #d1d5db); border-radius: 12px; padding: 12px; font: 14px/1.55 inherit; resize: vertical; }
+#recOverlay .modal-actions { justify-content: flex-end; gap: 8px; }

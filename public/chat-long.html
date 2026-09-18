@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="sb-url"  content="https://xgemmrmcwnkiclpfpekl.supabase.co" />
+  <meta name="sb-anon" content="sb_publishable_vnxuz81zBXbbt9j00CLXAA_lKV1rLyD" />
+  <title>Chat largo</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="chat-long.css" />
+  <link rel="stylesheet" href="long-record.css" />
+</head>
+<body>
+
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <a class="sidebar-title link-main" href="index.html">← Voice Chat</a>
+      <div class="sidebar-actions">
+        <a class="btn-icon" href="tts-lab.html" title="Voz lab">♪</a>
+        <a class="btn-icon" href="audio-lab.html" title="Audio lab">▲</a>
+        <button class="btn-icon btn-icon-accent" id="newChatBtn" title="Nuevo chat">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+            <path d="M19 3H5c-1.1 0-2 .9-2 2v14l4-4h12c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div class="chat-list" id="chatList"></div>
+    <div class="sidebar-footer">
+      <div class="sync-buttons">
+        <button class="btn-sync" id="syncPushBtn">Subir</button>
+        <button class="btn-sync" id="syncPullBtn">Bajar</button>
+      </div>
+      <div class="device-id-row">
+        <span class="sidebar-footer-label" style="flex:1">Usuario: </span>
+        <span class="device-id-value" id="deviceIdDisplay"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="main" id="main">
+    <div class="topbar">
+      <button class="btn-toggle-sidebar" id="toggleSidebar">☰</button>
+      <span class="topbar-title" id="chatTitle">Chat largo</span>
+      <button class="btn-settings" id="settingsBtn" title="System prompt">⚙</button>
+    </div>
+
+    <div class="messages" id="messages">
+      <div class="empty-state">Habla largo con el micrófono o escribe un mensaje.</div>
+    </div>
+
+    <div class="composer">
+      <textarea id="textInput" rows="1" placeholder="Escribe un mensaje..."></textarea>
+      <button class="btn-record-long" id="longMicBtn" title="Hablar largo">🎤</button>
+      <button class="btn-send-text" id="sendText">➤</button>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal">
+      <div class="modal-header">
+        <span>Configuración del chat</span>
+        <button class="modal-close" id="closeSettings">✕</button>
+      </div>
+      <div class="modal-field">
+        <label class="modal-label">System Prompt</label>
+        <textarea id="systemPrompt" placeholder="Instrucciones para la IA en este chat..." rows="5"></textarea>
+      </div>
+      <div class="modal-field">
+        <label class="modal-label">Nombre del chat</label>
+        <input type="text" id="chatNameInput" class="modal-input" placeholder="Nombre del chat" />
+      </div>
+      <div class="modal-actions">
+        <button id="savePromptBtn">Guardar</button>
+        <button id="clearHistoryBtn" class="btn-danger">Limpiar conversación</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="markdown.js"></script>
+  <script src="normalize-audio.js"></script>
+  <script src="long-record.js"></script>
+  <script src="chat-long.js"></script>
+</body>
+</html>
