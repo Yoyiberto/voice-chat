@@ -10,10 +10,12 @@ function json(data, status = 200, headers = {}) {
 
 function corsHeaders(request, env) {
   const origin = request.headers.get('Origin');
-  const allowed = env.D1_TEST_ORIGIN || '';
-  return origin && (!allowed || origin === allowed)
-    ? { 'access-control-allow-origin': origin, 'access-control-allow-headers': 'content-type, authorization', 'access-control-allow-methods': 'GET, PUT, DELETE, OPTIONS', 'vary': 'Origin' }
-    : {};
+  return {
+    'access-control-allow-origin': origin || '*',
+    'access-control-allow-headers': 'content-type, authorization, x-device-id, x-owner-id',
+    'access-control-allow-methods': 'GET, PUT, DELETE, OPTIONS',
+    'vary': 'Origin'
+  };
 }
 
 function fail(message, status = 400) { return json({ error: message }, status); }
@@ -21,7 +23,7 @@ function fail(message, status = 400) { return json({ error: message }, status); 
 function ownerFromRequest(request, env) {
   const configured = env.D1_TEST_TOKEN;
   if (configured && request.headers.get('Authorization') !== `Bearer ${configured}`) return null;
-  return env.D1_TEST_OWNER || 'local-test-user';
+  return request.headers.get('x-device-id') || request.headers.get('x-owner-id') || env.D1_TEST_OWNER || 'local-test-user';
 }
 
 function requireId(value) {
@@ -68,11 +70,31 @@ async function put(env, table, id, owner, body) {
     if (messagesJson.length > JSON_LIMIT) throw new Error('messages too large');
     await env.DB.prepare(`INSERT INTO chats (id, owner_id, folder_id, emoji, name, system_prompt, messages_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET folder_id=excluded.folder_id, emoji=excluded.emoji, name=excluded.name, system_prompt=excluded.system_prompt, messages_json=excluded.messages_json, updated_at=excluded.updated_at WHERE chats.owner_id=excluded.owner_id`).bind(id, owner, folderId, emoji, name, prompt, messagesJson, timestamp, timestamp).run();
     const result = await env.DB.prepare('SELECT * FROM chats WHERE id = ? AND owner_id = ?').bind(id, owner).first();
-    return chatRow(result);
+    const row = chatRow(result);
+    if (env.STORAGE) {
+      try {
+        await env.STORAGE.put(`chats/${owner}/${id}.json`, JSON.stringify(row, null, 2), {
+          httpMetadata: { contentType: 'application/json' }
+        });
+      } catch (e) {
+        console.error('R2 storage put error:', e);
+      }
+    }
+    return row;
   }
   await env.DB.prepare(`INSERT INTO folders (id, owner_id, emoji, name, system_prompt, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET emoji=excluded.emoji, name=excluded.name, system_prompt=excluded.system_prompt, updated_at=excluded.updated_at WHERE folders.owner_id=excluded.owner_id`).bind(id, owner, emoji, name, prompt, timestamp, timestamp).run();
   const result = await env.DB.prepare('SELECT * FROM folders WHERE id = ? AND owner_id = ?').bind(id, owner).first();
-  return folderRow(result);
+  const row = folderRow(result);
+  if (env.STORAGE) {
+    try {
+      await env.STORAGE.put(`folders/${owner}/${id}.json`, JSON.stringify(row, null, 2), {
+        httpMetadata: { contentType: 'application/json' }
+      });
+    } catch (e) {
+      console.error('R2 storage put error:', e);
+    }
+  }
+  return row;
 }
 
 export default {
@@ -80,9 +102,32 @@ export default {
     const headers = corsHeaders(request, env);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
     const url = new URL(request.url);
-    if (url.pathname === '/health' && request.method === 'GET') return json({ ok: true, service: 'cloudflare-d1-lab' }, 200, headers);
+    if (url.pathname === '/health' && request.method === 'GET') return json({ ok: true, service: 'cloudflare-d1-r2-backend' }, 200, headers);
     const owner = ownerFromRequest(request, env);
     if (!owner) return fail('Unauthorized', 401);
+
+    if (url.pathname === '/import' && request.method === 'POST') {
+      try {
+        const body = await readBody(request);
+        const chats = Array.isArray(body.chats) ? body.chats : [];
+        const folders = Array.isArray(body.folders) ? body.folders : [];
+        for (const f of folders) {
+          await put(env, 'folders', f.id, owner, f);
+        }
+        for (const c of chats) {
+          await put(env, 'chats', c.id, owner, c);
+        }
+        if (env.STORAGE) {
+          await env.STORAGE.put(`backups/${owner}/snapshot.json`, JSON.stringify({ owner, chats, folders, updated_at: now() }, null, 2), {
+            httpMetadata: { contentType: 'application/json' }
+          });
+        }
+        return json({ ok: true, importedChats: chats.length, importedFolders: folders.length }, 200, headers);
+      } catch (err) {
+        return fail(err.message || 'Import error', 400);
+      }
+    }
+
     const parts = url.pathname.split('/').filter(Boolean);
     if (parts.length < 1 || !['chats', 'folders'].includes(parts[0])) return fail('Not found', 404);
     const table = parts[0];
@@ -92,6 +137,11 @@ export default {
       if (request.method === 'DELETE' && parts.length === 2) {
         requireId(parts[1]);
         await env.DB.prepare(`DELETE FROM ${table} WHERE id = ? AND owner_id = ?`).bind(parts[1], owner).run();
+        if (env.STORAGE) {
+          try {
+            await env.STORAGE.delete(`${table}/${owner}/${parts[1]}.json`);
+          } catch (e) {}
+        }
         return json({ ok: true }, 200, headers);
       }
       return fail('Method not allowed', 405);

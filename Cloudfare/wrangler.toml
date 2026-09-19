@@ -7,9 +7,14 @@ compatibility_date = "2026-09-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "voice-chat-d1"
-database_id = "local-only-replace-after-create"
+database_id = "8367f343-ea2c-44dc-a431-de30ce75e131"
 migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "STORAGE"
+bucket_name = "voice-chat-storage"
 
 [vars]
 # Optional local test protection. Set D1_TEST_TOKEN in .dev.vars to enable it.
 D1_TEST_OWNER = "local-test-user"
+

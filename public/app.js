@@ -56,12 +56,10 @@ document.addEventListener('pointerdown', (e) => {
 });
 
 // ═══════════════════════════════════════════════
-//  SUPABASE CONFIG
-//  Credentials injected at build time or from meta tags
+//  CLOUDFLARE D1 WORKER CONFIG
 // ═══════════════════════════════════════════════
-const SUPABASE_URL  = document.querySelector('meta[name="sb-url"]')?.content  || '';
-const SUPABASE_ANON = document.querySelector('meta[name="sb-anon"]')?.content || '';
-const SB_READY = !!(SUPABASE_URL && SUPABASE_ANON);
+const CF_WORKER_URL = (document.querySelector('meta[name="cf-worker-url"]')?.content || 'https://voice-chat-d1-lab.draw-sync-worker.workers.dev').replace(/\/+$/, '');
+const CF_READY = !!CF_WORKER_URL;
 localStorage.removeItem('voiceAuthSession');
 
 // Simple shared username. This is intentionally not authentication.
@@ -78,48 +76,47 @@ function currentProviderLabel() {
 }
 localStorage.setItem('lastResponseProvider', currentProviderLabel());
 
-// Supabase REST helpers (no SDK needed — plain fetch)
-async function sbGet(table, eq = {}) {
-  if (!SB_READY) return [];
-  const params = new URLSearchParams({ select: '*', ...Object.fromEntries(Object.entries(eq).map(([k,v])=>[k, `eq.${v}`])) });
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}&order=created_at.asc`, {
-    headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}` }
+// Cloudflare REST helpers
+async function cfGet(table) {
+  if (!CF_READY) return [];
+  const r = await fetch(`${CF_WORKER_URL}/${table}`, {
+    headers: { 'x-device-id': DEVICE_ID }
   });
   if (!r.ok) {
     const errText = await r.text().catch(() => r.status);
-    console.error(`sbGet ${table} error ${r.status}:`, errText);
-    throw new Error(`sbGet ${table}: ${r.status} ${errText}`);
+    console.error(`cfGet ${table} error ${r.status}:`, errText);
+    throw new Error(`Cloudflare ${table}: ${r.status} ${errText}`);
   }
-  return r.json();
+  const data = await r.json();
+  return data[table] || [];
 }
 
-async function sbUpsert(table, row) {
-  if (!SB_READY) return;
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
-    method: 'POST',
-    headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}`,
-               'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' },
-    body: JSON.stringify(row)
+async function cfPut(table, id, body) {
+  if (!CF_READY) return;
+  const r = await fetch(`${CF_WORKER_URL}/${table}/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-device-id': DEVICE_ID
+    },
+    body: JSON.stringify(body)
   });
   if (!r.ok) {
     const errText = await r.text().catch(() => r.status);
-    console.error(`sbUpsert ${table} error ${r.status}:`, errText);
-    throw new Error(`Supabase ${table}: ${errText || r.status}`);
+    console.error(`cfPut ${table} error ${r.status}:`, errText);
   }
 }
 
-async function sbDelete(table, id) {
-  if (!SB_READY) return;
-  await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`, {
+async function cfDelete(table, id) {
+  if (!CF_READY) return;
+  await fetch(`${CF_WORKER_URL}/${table}/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}` }
-  });
+    headers: { 'x-device-id': DEVICE_ID }
+  }).catch(e => console.error(`cfDelete ${table} error:`, e));
 }
-
-// (polling removed — sync is manual via Push/Pull buttons)
 
 // ═══════════════════════════════════════════════
-//  DATA STORE  –  localStorage (primary) + Supabase (sync)
+//  DATA STORE  –  localStorage (primary) + Cloudflare (sync)
 // ═══════════════════════════════════════════════
 const STORE_KEY   = 'voiceChats_v2';
 const FOLDER_KEY  = 'voiceFolders_v2';
@@ -131,33 +128,50 @@ function saveFolders(f){ localStorage.setItem(FOLDER_KEY, JSON.stringify(f)); }
 
 // ── Sync helpers ──
 function chatToRow(c) {
-  return { id: c.id, device_id: DEVICE_ID, user_id: null, folder_id: c.folderId || null,
-           emoji: c.emoji || '💬', name: c.name, system_prompt: c.systemPrompt || '',
-           messages: c.messages || [], updated_at: new Date().toISOString() };
+  return {
+    id: c.id,
+    folder_id: c.folderId || null,
+    emoji: c.emoji || '💬',
+    name: c.name,
+    system_prompt: c.systemPrompt || '',
+    messages: c.messages || []
+  };
 }
 function rowToChat(r) {
-  return { id: r.id, emoji: r.emoji || '💬', name: r.name, systemPrompt: r.system_prompt || '',
-           folderId: r.folder_id || null, messages: r.messages || [] };
+  return {
+    id: r.id,
+    emoji: r.emoji || '💬',
+    name: r.name,
+    systemPrompt: r.system_prompt || '',
+    folderId: r.folder_id || null,
+    messages: Array.isArray(r.messages) ? r.messages : []
+  };
 }
 function folderToRow(f) {
-  return { id: f.id, device_id: DEVICE_ID, user_id: null, emoji: f.emoji || '📁',
-           name: f.name, system_prompt: f.systemPrompt || '' };
+  return {
+    id: f.id,
+    emoji: f.emoji || '📁',
+    name: f.name,
+    system_prompt: f.systemPrompt || ''
+  };
 }
 function rowToFolder(r) {
-  return { id: r.id, emoji: r.emoji || '📁', name: r.name, systemPrompt: r.system_prompt || '' };
+  return {
+    id: r.id,
+    emoji: r.emoji || '📁',
+    name: r.name,
+    systemPrompt: r.system_prompt || ''
+  };
 }
 
-async function syncFromSupabase(renderAfter = true, replace = false) {
-  if (!SB_READY) return;
-  const ownerFilter = { device_id: DEVICE_ID };
+async function syncFromCloudflare(renderAfter = true, replace = false) {
+  if (!CF_READY) return;
   try {
     const [remoteChats, remoteFolders] = await Promise.all([
-      sbGet('chats', ownerFilter),
-      sbGet('folders', ownerFilter)
+      cfGet('chats'),
+      cfGet('folders')
     ]);
 
-    // replace=true: wipe local data and load only what's on Supabase for this device_id
-    // replace=false: merge (remote wins on conflict, local-only entries are kept)
     const store = replace ? {} : loadStore();
     remoteChats.forEach(r => { store[r.id] = { ...store[r.id], ...rowToChat(r) }; });
     saveStore(store);
@@ -169,8 +183,8 @@ async function syncFromSupabase(renderAfter = true, replace = false) {
     if (renderAfter) { renderChatList(); }
     return { chats: remoteChats.length, folders: remoteFolders.length };
   } catch (e) {
-    console.error('syncFromSupabase error:', e);
-    throw e;   // re-throw so callers can show a toast
+    console.error('syncFromCloudflare error:', e);
+    throw e;
   }
 }
 
@@ -196,7 +210,7 @@ function createChat(name, folderId) {
     messages: []
   };
   saveStore(store);
-  sbUpsert('chats', chatToRow(store[id]));
+  cfPut('chats', id, chatToRow(store[id]));
   return store[id];
 }
 
@@ -207,7 +221,7 @@ function updateChat(id, patch) {
   if (!s[id]) return;
   Object.assign(s[id], patch);
   saveStore(s);
-  sbUpsert('chats', chatToRow(s[id]));
+  cfPut('chats', id, chatToRow(s[id]));
 }
 
 function moveChatToFolder(chatId, folderId) {
@@ -270,7 +284,7 @@ function deleteChat(id) {
   const s = loadStore();
   delete s[id];
   saveStore(s);
-  sbDelete('chats', id);
+  cfDelete('chats', id);
 }
 
 function allChats() {
@@ -287,7 +301,7 @@ function createFolder(name, emoji, systemPrompt) {
   const folders = loadFolders();
   folders[id] = { id, emoji: emoji || '📁', name: name || 'Nueva carpeta', systemPrompt: systemPrompt || '' };
   saveFolders(folders);
-  sbUpsert('folders', folderToRow(folders[id]));
+  cfPut('folders', id, folderToRow(folders[id]));
   return folders[id];
 }
 function getFolder(id) { return loadFolders()[id] || null; }
@@ -296,13 +310,13 @@ function updateFolder(id, patch) {
   if (!f[id]) return;
   Object.assign(f[id], patch);
   saveFolders(f);
-  sbUpsert('folders', folderToRow(f[id]));
+  cfPut('folders', id, folderToRow(f[id]));
 }
 function deleteFolder(id) {
   const f = loadFolders();
   delete f[id];
   saveFolders(f);
-  sbDelete('folders', id);
+  cfDelete('folders', id);
 }
 function allFolders() { return Object.values(loadFolders()); }
 
@@ -315,8 +329,8 @@ function saveOpenFolders() { localStorage.setItem('openFolders', JSON.stringify(
 // ═══════════════════════════════════════════════
 let activeChatId = localStorage.getItem('activeChatId');
 
-// Boot: sync from Supabase first, THEN ensure we have at least one chat
-syncFromSupabase(false, false).catch(() => {}).finally(() => {
+// Boot: sync from Cloudflare first, THEN ensure we have at least one chat
+syncFromCloudflare(false, false).catch(() => {}).finally(() => {
   // After sync, validate activeChatId — may have been populated by sync
   if (!activeChatId || !getChat(activeChatId)) {
     const existing = allChats();
@@ -374,39 +388,70 @@ const saveFolderBtn   = document.getElementById('saveFolderBtn');
 const deleteFolderBtn = document.getElementById('deleteFolderBtn');
 const iconMic         = recordBtn.querySelector('.icon-mic');
 const iconStop        = recordBtn.querySelector('.icon-stop');
-const modeMenuBtn     = document.getElementById('modeMenuBtn');
-const modeMenu        = document.getElementById('modeMenu');
+const hubMenuBtn     = document.getElementById('hubMenuBtn');
+const hubOverlay     = document.getElementById('hubOverlay');
+const hubCloseBtn    = document.getElementById('hubCloseBtn');
 
 // ═══════════════════════════════════════════════
 //  SIDEBAR
 // ═══════════════════════════════════════════════
 toggleSidebar.addEventListener('click', () => sidebar.classList.toggle('open'));
 
-function renderModeMenu() {
+function openHubMenu() {
+  if (!hubOverlay) return;
+  hubOverlay.classList.add('open');
+  hubOverlay.setAttribute('aria-hidden', 'false');
+  updateHubTiles();
+}
+
+function closeHubMenu() {
+  if (!hubOverlay) return;
+  hubOverlay.classList.remove('open');
+  hubOverlay.setAttribute('aria-hidden', 'true');
+}
+
+function updateHubTiles() {
   const current = window.VoiceModes?.getMode() || 'long-talk';
-  modeMenu?.querySelectorAll('.mode-option').forEach((button) => button.classList.toggle('active', button.dataset.mode === current));
-  if (modeMenuBtn) modeMenuBtn.setAttribute('aria-expanded', modeMenu?.classList.contains('open') ? 'true' : 'false');
+  hubOverlay?.querySelectorAll('.hub-tile').forEach((tile) => {
+    tile.classList.toggle('active', tile.dataset.mode === current);
+  });
 }
-function closeModeMenu() {
-  modeMenu?.classList.remove('open');
-  modeMenu?.setAttribute('aria-hidden', 'true');
-  renderModeMenu();
-}
-modeMenuBtn?.addEventListener('click', (event) => {
+
+hubMenuBtn?.addEventListener('click', (event) => {
   event.stopPropagation();
-  const open = !modeMenu.classList.contains('open');
-  modeMenu.classList.toggle('open', open);
-  modeMenu.setAttribute('aria-hidden', open ? 'false' : 'true');
-  renderModeMenu();
+  if (hubOverlay?.classList.contains('open')) {
+    closeHubMenu();
+  } else {
+    openHubMenu();
+  }
 });
-modeMenu?.querySelectorAll('.mode-option').forEach((button) => button.addEventListener('click', () => {
-  window.VoiceModes?.setMode(button.dataset.mode);
-  closeModeMenu();
-  renderModelOptions();
-  showToast(`Modo ${button.querySelector('b')?.textContent || button.dataset.mode} activado`, false);
-}));
-window.addEventListener('voice-mode-change', renderModeMenu);
-renderModeMenu();
+
+hubCloseBtn?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  closeHubMenu();
+});
+
+hubOverlay?.addEventListener('click', (e) => {
+  if (e.target === hubOverlay) closeHubMenu();
+});
+
+hubOverlay?.querySelectorAll('.hub-tile').forEach((tile) => {
+  tile.addEventListener('click', () => {
+    const mode = tile.dataset.mode;
+    if (mode === 'long-talk') {
+      window.VoiceModes?.setMode('long-talk');
+      updateHubTiles();
+      closeHubMenu();
+      showToast('Modo Long talk (Whisper + Luna)', false);
+    } else {
+      const names = { web: 'Web', 'no-cut': 'No cut', gemini: 'Gemini' };
+      showToast(`Modo visual (${names[mode] || mode}) — Próximamente. Continuando en Long talk.`, false);
+    }
+  });
+});
+
+window.addEventListener('voice-mode-change', updateHubTiles);
+updateHubTiles();
 
 document.addEventListener('click', (e) => {
   if (sidebar.classList.contains('open') &&
@@ -414,7 +459,11 @@ document.addEventListener('click', (e) => {
       !toggleSidebar.contains(e.target)) {
       sidebar.classList.remove('open');
   }
-  if (modeMenu?.classList.contains('open') && !modeMenu.contains(e.target) && !modeMenuBtn.contains(e.target)) closeModeMenu();
+  if (hubOverlay?.classList.contains('open') &&
+      !hubOverlay.querySelector('.hub-card')?.contains(e.target) &&
+      !hubMenuBtn?.contains(e.target)) {
+      closeHubMenu();
+  }
 });
 
 newChatBtn.addEventListener('click', () => {
@@ -1407,16 +1456,16 @@ const syncPushBtn = document.getElementById('syncPushBtn');
 const syncPullBtn = document.getElementById('syncPullBtn');
 
 if (syncPushBtn) syncPushBtn.addEventListener('click', async () => {
-  if (!SB_READY) { showToast('Supabase no configurado'); return; }
+  if (!CF_READY) { showToast('Cloudflare no configurado'); return; }
   syncPushBtn.disabled = true;
   try {
     const localFolders = allFolders();
     const localChats   = allChats();
     await Promise.all([
-      ...localFolders.map(f => sbUpsert('folders', folderToRow(f))),
-      ...localChats.map(c => sbUpsert('chats',   chatToRow(c)))
+      ...localFolders.map(f => cfPut('folders', f.id, folderToRow(f))),
+      ...localChats.map(c => cfPut('chats',   c.id, chatToRow(c)))
     ]);
-    showToast(`Subido: ${localChats.length} chat(s)`, false);
+    showToast(`Subido a Cloudflare: ${localChats.length} chat(s)`, false);
   } catch (e) {
     showToast('Error al subir: ' + e.message);
   } finally {
@@ -1425,10 +1474,10 @@ if (syncPushBtn) syncPushBtn.addEventListener('click', async () => {
 });
 
 if (syncPullBtn) syncPullBtn.addEventListener('click', async () => {
-  if (!SB_READY) { showToast('Supabase no configurado'); return; }
+  if (!CF_READY) { showToast('Cloudflare no configurado'); return; }
   syncPullBtn.disabled = true;
   try {
-    const result = await syncFromSupabase(true, false);
+    const result = await syncFromCloudflare(true, false);
     // Ensure active chat still exists
     if (!getChat(activeChatId)) {
       const chats = allChats();
@@ -1438,7 +1487,7 @@ if (syncPullBtn) syncPullBtn.addEventListener('click', async () => {
     } else {
       renderChatList();
     }
-    showToast(`Bajado: ${result.chats} chat(s)`, false);
+    showToast(`Bajado de Cloudflare: ${result ? result.chats : 0} chat(s)`, false);
   } catch (e) {
     showToast('Error al bajar: ' + e.message);
   } finally {
@@ -1651,12 +1700,12 @@ if (confirmLinkBtn) confirmLinkBtn.addEventListener('click', async () => {
 
     // Upload local folders + chats with the new device_id
     await Promise.all([
-      ...localFolders.map(f => sbUpsert('folders', folderToRow(f))),
-      ...localChats.map(c => sbUpsert('chats',   chatToRow(c)))
+      ...localFolders.map(f => cfPut('folders', f.id, folderToRow(f))),
+      ...localChats.map(c => cfPut('chats',   c.id, chatToRow(c)))
     ]);
 
-    // 2. Pull everything from Supabase for this device_id (replace local store)
-    const result = await syncFromSupabase(true, true);
+    // 2. Pull everything from Cloudflare for this device_id (replace local store)
+    const result = await syncFromCloudflare(true, true);
 
     // 3. Switch to first chat
     const chats = allChats();
