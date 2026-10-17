@@ -30,7 +30,7 @@
   const getChat = (id) => loadStore()[id] || null;
 
   const DEFAULT_SYSTEM_PROMPT = 'Responde máximo en 100 palabras y termina con tres preguntas cortas para saber hacia dónde dirigir la conversación. No te limites a repetir lo que dice el usuario: si en alguna ocasión repites algo de lo que dijo, que sea para aportar claridad real o señalar un insight importante. Sé concreto y evita respuestas vagas o que solo hagan eco de lo dicho.';
-  const DEFAULT_MODEL = 'pipeline:openai/gpt-5.6-luna';
+  const DEFAULT_MODEL = 'pipeline:deepseek/deepseek-v4.1-flash';
 
   function chatToRow(c) {
     return { id: c.id, device_id: DEVICE_ID, user_id: null, folder_id: c.folderId || null, emoji: c.emoji || '💬', name: c.name || '', system_prompt: c.systemPrompt || '', messages: c.messages || [], updated_at: new Date().toISOString() };
@@ -188,7 +188,7 @@
     wrap.className = 'message model thinking';
     const label = document.createElement('div');
     label.className = 'message-label';
-    label.textContent = currentModel().startsWith('pipeline:') ? 'Whisper + Luna' : 'IA';
+    label.textContent = currentModel().startsWith('pipeline:') ? 'Whisper + IA' : 'IA';
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
     bubble.textContent = 'Pensando...';
@@ -228,7 +228,7 @@
         ...opts,
       };
       if (!body.message) body.message = finalText;
-      localStorage.setItem('lastResponseProvider', isPipeline ? 'Whisper + Luna' : 'IA');
+      localStorage.setItem('lastResponseProvider', isPipeline ? 'Whisper + IA' : 'IA');
       const res = await fetch(isPipeline ? '/pipeline' : '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json().catch(() => ({}));
       thinking.remove();

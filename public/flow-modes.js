@@ -1,9 +1,9 @@
 (() => {
   'use strict';
   const MODES = {
-    'long-talk': { label: 'Long talk', description: 'Chunks incrementales', model: 'pipeline:openai/gpt-5.6-luna' },
-    web: { label: 'Web', description: 'Reflexión + búsqueda', model: 'pipeline:openai/gpt-5.6-luna' },
-    'no-cut': { label: 'No cut', description: 'Audio completo', model: 'pipeline:openai/gpt-5.6-luna' },
+    'long-talk': { label: 'Long talk', description: 'Chunks incrementales', model: 'pipeline:deepseek/deepseek-v4.1-flash' },
+    web: { label: 'Web', description: 'Reflexión + búsqueda', model: 'pipeline:deepseek/deepseek-v4.1-flash' },
+    'no-cut': { label: 'No cut', description: 'Audio completo', model: 'pipeline:deepseek/deepseek-v4.1-flash' },
     gemini: { label: 'Gemini', description: 'Modelo Gemini directo', model: 'google:gemini-3.1-flash-lite-preview' },
   };
   const key = 'voiceMode';

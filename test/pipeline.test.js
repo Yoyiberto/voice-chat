@@ -93,7 +93,7 @@ test('web search sends the server tool and provider metadata', async () => {
   }]);
   assert.equal(request.max_tool_calls, 2);
   assert.equal(result.provider.webSearch, true);
-  assert.equal(result.provider.model, 'openai/gpt-5.6-luna');
+  assert.equal(result.provider.model, 'deepseek/deepseek-v4.1-flash');
   assert.equal(result.provider.searchRequests, 2);
   assert.deepEqual(result.provider.citations, [{
     type: 'url_citation',

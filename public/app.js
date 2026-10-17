@@ -68,9 +68,15 @@ if (!DEVICE_ID) DEVICE_ID = 'usuario_' + Math.random().toString(36).slice(2, 8);
 localStorage.setItem('voiceUsername', DEVICE_ID);
 localStorage.setItem('deviceId', DEVICE_ID);
 
+// One-time move from the old default (Luna) to DeepSeek V4.1 Flash, chosen by llm_voice_bench (2026-10).
+if (!localStorage.getItem('modelDefaultV2') && localStorage.getItem('selectedModel') === 'pipeline:openai/gpt-5.6-luna') {
+  localStorage.setItem('selectedModel', 'pipeline:deepseek/deepseek-v4.1-flash');
+}
+localStorage.setItem('modelDefaultV2', '1');
+
 function currentProviderLabel() {
-  const selected = localStorage.getItem('selectedModel') || 'pipeline:openai/gpt-5.6-luna';
-  if (selected.startsWith('pipeline:')) return 'Whisper + Luna';
+  const selected = localStorage.getItem('selectedModel') || 'pipeline:deepseek/deepseek-v4.1-flash';
+  if (selected.startsWith('pipeline:')) return 'Whisper + IA';
   if (selected.startsWith('openrouter:')) return 'OpenRouter';
   return 'Gemini';
 }
@@ -442,7 +448,7 @@ hubOverlay?.querySelectorAll('.hub-tile').forEach((tile) => {
       window.VoiceModes?.setMode('long-talk');
       updateHubTiles();
       closeHubMenu();
-      showToast('Modo Long talk (Whisper + Luna)', false);
+      showToast('Modo Long talk (Whisper + IA)', false);
     } else {
       const names = { web: 'Web', 'no-cut': 'No cut', gemini: 'Gemini' };
       showToast(`Modo visual (${names[mode] || mode}) — Próximamente. Continuando en Long talk.`, false);
@@ -741,7 +747,7 @@ function addThinkingDOM() {
   wrap.className = 'message model thinking';
   const label  = document.createElement('div');
   label.className = 'message-label';
-  label.textContent = localStorage.getItem('selectedModel')?.startsWith('pipeline:') ? 'Whisper + Luna' : 'Gemini';
+  label.textContent = localStorage.getItem('selectedModel')?.startsWith('pipeline:') ? 'Whisper + IA' : 'Gemini';
   const bubble = document.createElement('div');
   bubble.className = 'message-bubble';
   bubble.innerHTML = `Pensando <span class="dots"><span></span><span></span><span></span></span>`;
@@ -788,7 +794,7 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
   const thinking = addThinkingDOM();
 
   try {
-    const selectedModel = localStorage.getItem('selectedModel') || 'pipeline:openai/gpt-5.6-luna';
+    const selectedModel = localStorage.getItem('selectedModel') || 'pipeline:deepseek/deepseek-v4.1-flash';
     const voiceMode = window.VoiceModes?.getMode() || 'long-talk';
     const isPipeline = selectedModel.startsWith('pipeline:');
     const body = {
@@ -806,7 +812,7 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
       body.audioDuration = audioDur || 0;
     }
 
-    localStorage.setItem('lastResponseProvider', isPipeline ? 'Whisper + Luna' : (selectedModel.split(':')[0] === 'openrouter' ? 'OpenRouter' : 'Gemini'));
+    localStorage.setItem('lastResponseProvider', isPipeline ? 'Whisper + IA' : (selectedModel.split(':')[0] === 'openrouter' ? 'OpenRouter' : 'Gemini'));
     const res  = await fetch(isPipeline ? '/pipeline' : '/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1496,13 +1502,17 @@ if (syncPullBtn) syncPullBtn.addEventListener('click', async () => {
 });
 
 // ── Global settings modal (model selector) ──
-const DEFAULT_MODEL = 'pipeline:openai/gpt-5.6-luna';
+const DEFAULT_MODEL = 'pipeline:deepseek/deepseek-v4.1-flash';
 const BUILTIN_MODELS = [
   { value: 'google:gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite', tag: 'Google' },
   { value: 'openrouter:google/gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite', tag: 'OpenRouter' },
   { value: 'openrouter:google/gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', tag: 'OpenRouter' },
   { value: 'openrouter:google/gemini-3-flash-preview', name: 'Gemini 3 Flash', tag: 'OpenRouter' },
-  { value: 'pipeline:openai/gpt-5.6-luna', name: 'Whisper large turbo + GPT-5.6 Luna', tag: 'Pipeline' },
+  { value: 'pipeline:deepseek/deepseek-v4.1-flash', name: 'Whisper + DeepSeek V4.1 Flash (recomendado)', tag: 'Pipeline' },
+  { value: 'pipeline:anthropic/claude-sonnet-5.5', name: 'Whisper + Claude Sonnet 5.5 (máxima calidad, ~30× costo)', tag: 'Pipeline' },
+  { value: 'pipeline:z-ai/glm-5.3-flash', name: 'Whisper + GLM 5.3 Flash (rápido)', tag: 'Pipeline' },
+  { value: 'pipeline:openai/gpt-6-luna', name: 'Whisper + GPT-6 Luna', tag: 'Pipeline' },
+  { value: 'pipeline:openai/gpt-5.6-luna', name: 'Whisper + GPT-5.6 Luna (anterior)', tag: 'Pipeline' },
 ];
 
 const globalSettingsBtn   = document.getElementById('globalSettingsBtn');
