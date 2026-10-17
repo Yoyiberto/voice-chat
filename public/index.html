@@ -197,43 +197,47 @@
 
     <!-- Memory modal (cross-chat memory: view, edit, delete) -->
     <div class="modal-overlay" id="memoryModal">
-      <div class="modal memory-modal">
-        <div class="modal-header">
-          <span>Memoria <span class="memory-count" id="memoryCount"></span></span>
-          <button class="modal-close" id="closeMemoryModal">✕</button>
+      <div class="modal memory-modal" role="dialog" aria-modal="true" aria-labelledby="memoryTitle">
+        <div class="memory-head">
+          <div class="memory-head-title"><span id="memoryTitle">Memoria</span><span class="memory-count" id="memoryCount"></span></div>
+          <button class="memory-close" id="closeMemoryModal" aria-label="Cerrar">✕</button>
         </div>
         <div class="memory-main" id="memoryMain">
-        <section class="memory-profile">
-          <div class="memory-profile-head">
-            <label for="memoryProfileText">Perfil · Contexto sobre mí</label>
-            <span id="memoryProfileCount"></span>
+          <div class="memory-scroll">
+            <details class="memory-profile" id="memoryProfileBox">
+              <summary class="memory-profile-head">
+                <span class="memory-profile-label">Sobre ti</span>
+                <span class="memory-profile-preview" id="memoryProfilePreview"></span>
+                <span class="memory-profile-count" id="memoryProfileCount"></span>
+              </summary>
+              <textarea id="memoryProfileText" rows="3" placeholder="2 a 5 líneas estables: quién eres, tus proyectos grandes, cómo prefieres que te hablen…"></textarea>
+              <p class="memory-note">Tu perfil y hasta 10 ítems activos (los más recientes o relacionados) se usan en cada chat, solo si aportan.</p>
+            </details>
+            <div class="memory-filters" id="memoryFilters" role="tablist">
+              <button type="button" data-filter="active" data-label="Activos" class="active">Activos</button>
+              <button type="button" data-filter="decision" data-label="Decisiones">Decisiones</button>
+              <button type="button" data-filter="paso" data-label="Pasos">Pasos</button>
+              <button type="button" data-filter="pregunta" data-label="Preguntas">Preguntas</button>
+              <button type="button" data-filter="patron" data-label="Patrones">Patrones</button>
+              <button type="button" data-filter="done" data-label="Hechos">Hechos</button>
+            </div>
+            <p class="memory-hint" id="memoryHint"></p>
+            <div class="memory-list" id="memoryList"></div>
+            <div class="memory-tools">
+              <button type="button" class="memory-tool" id="memoryImportBtn" title="Destilar memorias de Claude, ChatGPT o Perplexity en pocos ítems">Importar de otro asistente</button>
+              <button type="button" class="memory-tool" id="memoryConsolidateBtn" title="Fusionar duplicados y podar lo viejo">Consolidar</button>
+            </div>
           </div>
-          <textarea id="memoryProfileText" rows="3" placeholder="2 a 5 líneas estables: quién eres, tus proyectos grandes, cómo prefieres que te hablen…"></textarea>
-        </section>
-        <p class="memory-hint" id="memoryHint">En cada chat se usan tu perfil y hasta 10 ítems activos (los más recientes o relacionados), solo si aportan.</p>
-        <div class="memory-filters" id="memoryFilters">
-          <button type="button" data-filter="active" class="active">Activos</button>
-          <button type="button" data-filter="decision">Decisiones</button>
-          <button type="button" data-filter="paso">Pasos</button>
-          <button type="button" data-filter="pregunta">Preguntas</button>
-          <button type="button" data-filter="patron">Patrones</button>
-          <button type="button" data-filter="done">Hechos</button>
-        </div>
-        <div class="memory-list" id="memoryList"></div>
-        <form class="memory-add" id="memoryAddForm">
-          <select id="memoryAddKind" class="modal-input" aria-label="Tipo">
-            <option value="paso">Paso</option>
-            <option value="decision">Decisión</option>
-            <option value="pregunta">Pregunta abierta</option>
-            <option value="patron">Patrón</option>
-          </select>
-          <input type="text" id="memoryAddText" class="modal-input" placeholder="Añadir un ítem a mano…" maxlength="240" />
-          <button type="submit" class="btn-add-model">Añadir</button>
-        </form>
-        <div class="memory-tools">
-          <button type="button" class="memory-action" id="memoryImportBtn" title="Destilar memorias de Claude, ChatGPT o Perplexity en pocos ítems">Importar…</button>
-          <button type="button" class="memory-action" id="memoryConsolidateBtn" title="Fusionar duplicados y podar lo viejo">Consolidar</button>
-        </div>
+          <form class="memory-add" id="memoryAddForm">
+            <select id="memoryAddKind" aria-label="Tipo">
+              <option value="paso">Paso</option>
+              <option value="decision">Decisión</option>
+              <option value="pregunta">Pregunta</option>
+              <option value="patron">Patrón</option>
+            </select>
+            <input type="text" id="memoryAddText" placeholder="Añadir algo para recordar…" maxlength="240" />
+            <button type="submit" class="memory-add-btn" aria-label="Añadir">+</button>
+          </form>
         </div>
         <div class="memory-panel" id="memoryPanel" hidden></div>
       </div>

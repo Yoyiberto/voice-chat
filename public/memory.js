@@ -148,6 +148,10 @@
     }
 
     // ── View ──
+    const svgIcon = (d) => `<svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true"><path d="${d}"/></svg>`;
+    const ICON_CHECK = svgIcon('M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z');
+    const ICON_UNDO = svgIcon('M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62A7.95 7.95 0 0 1 12.5 10c3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 10.53 17.15 8 12.5 8z');
+    const ICON_TRASH = svgIcon('M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z');
     const modal = document.getElementById('memoryModal');
     const listEl = document.getElementById('memoryList');
     const countEl = document.getElementById('memoryCount');
@@ -203,22 +207,24 @@
 
     function itemRow(item, inChat) {
       const row = document.createElement('div');
-      row.className = `memory-item${item.status === 'done' ? ' done' : ''}`;
+      row.className = `memory-item memory-item-${item.kind}${item.status === 'done' ? ' done' : ''}`;
       row.dataset.id = item.id;
 
+      // One footer line: type · date · "en uso" · actions. The source chat stays in the tooltip.
       const meta = document.createElement('div');
-      meta.className = 'memory-item-meta';
+      meta.className = 'memory-item-foot';
       const select = kindSelect(item.kind);
       select.addEventListener('change', () => guarded(() => save({ ...item, kind: select.value })));
       meta.appendChild(select);
       const info = document.createElement('span');
       info.className = 'memory-item-info';
-      info.textContent = [formatDate(item.created_at), item.source_chat_name ? `de «${item.source_chat_name}»` : ''].filter(Boolean).join(' · ');
+      info.textContent = formatDate(item.created_at);
+      if (item.source_chat_name) info.title = `de «${item.source_chat_name}»`;
       meta.appendChild(info);
       if (inChat) {
         const badge = document.createElement('span');
         badge.className = 'memory-badge';
-        badge.textContent = 'en este chat';
+        badge.textContent = 'en uso';
         badge.title = 'Este ítem se inyectó en el chat abierto';
         meta.appendChild(badge);
       }
@@ -236,32 +242,32 @@
         if (value !== item.text) guarded(async () => { await save({ ...item, text: value }); toast('Memoria actualizada', false); });
       });
 
-      const actions = document.createElement('div');
-      actions.className = 'memory-item-actions';
       const done = document.createElement('button');
       done.type = 'button';
-      done.className = 'memory-action';
-      done.textContent = item.status === 'done' ? 'Reabrir' : 'Hecho';
+      done.className = 'memory-icon';
+      done.innerHTML = item.status === 'done' ? ICON_UNDO : ICON_CHECK;
+      done.setAttribute('aria-label', item.status === 'done' ? 'Reabrir' : 'Marcar como hecho');
       done.title = item.status === 'done' ? 'Volver a usarlo en las conversaciones' : 'Marcar como hecho: deja de inyectarse';
       done.addEventListener('click', () => guarded(() => save({ ...item, status: item.status === 'done' ? 'active' : 'done' })));
       const del = document.createElement('button');
       del.type = 'button';
-      del.className = 'memory-action memory-action-danger';
-      del.textContent = 'Borrar';
+      del.className = 'memory-icon memory-icon-danger';
+      del.innerHTML = ICON_TRASH;
+      del.setAttribute('aria-label', 'Borrar');
       let armed = null;
       del.addEventListener('click', () => {
         if (!armed) {
           del.textContent = '¿Borrar?';
           del.classList.add('armed');
-          armed = setTimeout(() => { armed = null; del.textContent = 'Borrar'; del.classList.remove('armed'); }, 3000);
+          armed = setTimeout(() => { armed = null; del.innerHTML = ICON_TRASH; del.classList.remove('armed'); }, 3000);
           return;
         }
         clearTimeout(armed);
         guarded(async () => { await remove(item.id); toast('Ítem borrado', false); });
       });
-      actions.append(done, del);
+      meta.append(done, del);
 
-      row.append(meta, text, actions);
+      row.append(text, meta);
       requestAnimationFrame(() => autosize(text));
       return row;
     }
@@ -275,13 +281,20 @@
         return item.status === 'active' && item.kind === filter;
       });
       const activeCount = all.filter((item) => item.status === 'active').length;
-      countEl.textContent = `${activeCount} activos · ${all.length - activeCount} hechos`;
+      countEl.textContent = activeCount ? `${activeCount} activos` : '';
       const tooMany = activeCount > MANY_ACTIVE;
       hintEl.classList.toggle('warn', tooMany);
       hintEl.textContent = tooMany
         ? `Tienes ${activeCount} ítems activos: pulsa «Consolidar» para que la memoria siga siendo pequeña y útil.`
         : hintDefault;
-      for (const button of filtersEl.querySelectorAll('button')) button.classList.toggle('active', button.dataset.filter === filter);
+      const countFor = (f) => all.filter((item) => (
+        f === 'active' ? item.status === 'active' : f === 'done' ? item.status === 'done' : item.status === 'active' && item.kind === f
+      )).length;
+      for (const button of filtersEl.querySelectorAll('button')) {
+        button.classList.toggle('active', button.dataset.filter === filter);
+        const n = countFor(button.dataset.filter);
+        button.textContent = n ? `${button.dataset.label} ${n}` : button.dataset.label;
+      }
       listEl.innerHTML = '';
       if (!visible.length) {
         const empty = document.createElement('div');
@@ -317,7 +330,10 @@
     // ── Profile ──
     function updateProfileCount() {
       const n = profileLines(profileEl.value).length;
-      profileCountEl.textContent = `${n}/${MAX_PROFILE_LINES} líneas`;
+      profileCountEl.textContent = `${n}/${MAX_PROFILE_LINES}`;
+      // The collapsed profile shows its first line as a preview.
+      const preview = document.getElementById('memoryProfilePreview');
+      if (preview) preview.textContent = profileLines(profileEl.value)[0] || 'Añade 2 a 5 líneas sobre ti';
       profileCountEl.classList.toggle('over', n > MAX_PROFILE_LINES);
     }
     function renderProfile() {
