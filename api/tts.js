@@ -1,5 +1,6 @@
 // Vercel serverless proxy for Microsoft Edge neural TTS (free, no API key).
 import { MsEdgeTTS } from 'msedge-tts';
+import { pipeline } from 'stream';
 
 const FORMATS = {
   mp3: 'audio-24khz-48kbitrate-mono-mp3',
@@ -15,14 +16,15 @@ export default async function handler(req, res) {
     return;
   }
   try {
-    const { OUTPUT_FORMAT } = await import('msedge-tts');
-    const chosen = OUTPUT_FORMAT[FORMATS[format] || FORMATS.webm] || OUTPUT_FORMAT.WEBM_24KHZ_16BIT_MONO_OPUS;
+    // FORMATS values are OUTPUT_FORMAT values (the enum is not keyed by them).
+    const chosen = FORMATS[format] || FORMATS.webm;
     const t = new MsEdgeTTS();
     await t.setMetadata(voice, chosen);
     const { audioStream } = await t.toStream(text);
     res.setHeader('Content-Type', format === 'mp3' ? 'audio/mpeg' : 'audio/webm');
     res.setHeader('Cache-Control', 'no-store');
-    audioStream.pipe(res);
+    // pipeline ends the response on stream errors; close() drops the Edge socket.
+    pipeline(audioStream, res, () => t.close());
   } catch (err) {
     res.status(502).json({ error: 'TTS failed: ' + err.message });
   }

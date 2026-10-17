@@ -58,7 +58,10 @@ document.addEventListener('pointerdown', (e) => {
 // ═══════════════════════════════════════════════
 //  CLOUDFLARE D1 WORKER CONFIG
 // ═══════════════════════════════════════════════
-const CF_WORKER_URL = (document.querySelector('meta[name="cf-worker-url"]')?.content || 'https://voice-chat-d1-lab.draw-sync-worker.workers.dev').replace(/\/+$/, '');
+// Local prototype only: localStorage.cfWorkerUrl points the app at `wrangler dev`.
+// Ignored on any other host so a link can never redirect sync to another worker.
+const CF_WORKER_OVERRIDE = ['localhost', '127.0.0.1'].includes(location.hostname) ? localStorage.getItem('cfWorkerUrl') : null;
+const CF_WORKER_URL = (CF_WORKER_OVERRIDE || document.querySelector('meta[name="cf-worker-url"]')?.content || 'https://voice-chat-d1-lab.draw-sync-worker.workers.dev').replace(/\/+$/, '');
 const CF_READY = !!CF_WORKER_URL;
 localStorage.removeItem('voiceAuthSession');
 
@@ -75,12 +78,8 @@ if (!localStorage.getItem('modelDefaultV2') && localStorage.getItem('selectedMod
 localStorage.setItem('modelDefaultV2', '1');
 
 function currentProviderLabel() {
-  const selected = localStorage.getItem('selectedModel') || 'pipeline:deepseek/deepseek-v4.1-flash';
-  if (selected.startsWith('pipeline:')) return 'Whisper + IA';
-  if (selected.startsWith('openrouter:')) return 'OpenRouter';
-  return 'Gemini';
+  return window.VoiceSettings?.summary().llm.name || 'IA';
 }
-localStorage.setItem('lastResponseProvider', currentProviderLabel());
 
 // Cloudflare REST helpers
 async function cfGet(table) {
@@ -230,6 +229,14 @@ function updateChat(id, patch) {
   cfPut('chats', id, chatToRow(s[id]));
 }
 
+// Browser-only chat fields (memory bookkeeping): saved locally, no D1 write.
+function patchChatLocal(id, patch) {
+  const s = loadStore();
+  if (!s[id]) return;
+  Object.assign(s[id], patch);
+  saveStore(s);
+}
+
 function moveChatToFolder(chatId, folderId) {
   const chat = getChat(chatId);
   if (!chat) return;
@@ -352,6 +359,21 @@ syncFromCloudflare(false, false).catch(() => {}).finally(() => {
   switchChat(activeChatId);
 });
 
+// Cross-chat memory (public/memory.js). Refreshed from D1 at boot; its button and
+// the "Cerrar y recordar" bar stay hidden until the worker answers /memory.
+const memoryStore = window.VoiceMemory.create({
+  workerUrl: CF_READY ? CF_WORKER_URL : '',
+  getOwner: () => DEVICE_ID,
+  getChat: (id) => getChat(id),
+  toast: (msg, isError) => showToast(msg, isError),
+  // Show the memory UI once available and keep the chat's "Memoria guardada" card in step with the view.
+  onChange: () => {
+    memoryBtn.style.display = memoryStore.isAvailable() ? '' : 'none';
+    if (!messagesEl.querySelector('.thinking')) renderMemoryBar();
+  },
+});
+memoryStore.sync().catch((e) => console.warn('memory sync:', e.message));
+
 
 // ═══════════════════════════════════════════════
 //  DOM REFS
@@ -397,6 +419,7 @@ const iconStop        = recordBtn.querySelector('.icon-stop');
 const hubMenuBtn     = document.getElementById('hubMenuBtn');
 const hubOverlay     = document.getElementById('hubOverlay');
 const hubCloseBtn    = document.getElementById('hubCloseBtn');
+const memoryBtn      = document.getElementById('memoryBtn');
 
 // ═══════════════════════════════════════════════
 //  SIDEBAR
@@ -676,13 +699,91 @@ function renderMessages() {
     if (msg.role === 'user') {
       addMessageDOM('user', msg.text || null, msg.isAudio || false, msg.audioDur || null);
     } else {
-      addMessageDOM('model', msg.text);
+      addMessageDOM('model', msg.text, false, null, msg.by);
     }
   });
+  renderMemoryBar();
   scrollToBottom();
 }
 
-function addMessageDOM(role, text, isAudio = false, audioDur = null) {
+// ── "Cerrar y recordar": extract 1–5 memory items from the open chat ──
+let memoryBusyChatId = null;
+
+function renderMemoryBar(saved) {
+  messagesEl.querySelector('.memory-bar')?.remove();
+  if (!memoryStore.isAvailable()) return;
+  const chat = getChat(activeChatId);
+  if (!chat || !chat.messages.some(m => m.role === 'model')) return;
+  const bar = document.createElement('div');
+  bar.className = 'memory-bar';
+  const lastTs = Math.max(...chat.messages.map(m => m.ts || 0));
+  const closed = chat.memorySavedAt && chat.memorySavedAt >= lastTs;
+
+  if (memoryBusyChatId === chat.id) {
+    bar.innerHTML = '<span class="memory-bar-status">Guardando memoria <span class="dots"><span></span><span></span><span></span></span></span>';
+  } else if (closed) {
+    const items = saved || memoryStore.list().filter(item => (chat.memorySavedIds || []).includes(item.id));
+    const title = document.createElement('div');
+    title.className = 'memory-bar-title';
+    title.textContent = items.length ? 'Memoria guardada de este chat' : 'Memoria guardada';
+    bar.appendChild(title);
+    if (items.length) {
+      const ul = document.createElement('ul');
+      ul.className = 'memory-bar-items';
+      for (const item of items) {
+        const li = document.createElement('li');
+        if (item.status === 'done') li.className = 'done';
+        const kind = document.createElement('span');
+        kind.className = `memory-chip memory-chip-${item.kind}`;
+        kind.textContent = memoryStore.KIND_LABELS[item.kind] || item.kind;
+        li.append(kind, document.createTextNode(' ' + item.text));
+        ul.appendChild(li);
+      }
+      bar.appendChild(ul);
+    }
+    const view = document.createElement('button');
+    view.type = 'button';
+    view.className = 'memory-bar-btn memory-bar-btn-ghost';
+    view.textContent = 'Ver y editar memoria';
+    view.addEventListener('click', () => memoryStore.open(activeChatId));
+    bar.appendChild(view);
+  } else {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'memory-bar-btn';
+    btn.id = 'closeRememberBtn';
+    btn.textContent = chat.memorySavedAt ? 'Cerrar y recordar otra vez' : 'Cerrar y recordar';
+    btn.title = 'Guardar las decisiones, pasos y preguntas de este chat para los próximos';
+    btn.addEventListener('click', () => rememberChat(chat.id));
+    bar.appendChild(btn);
+  }
+  messagesEl.appendChild(bar);
+}
+
+async function rememberChat(chatId) {
+  const chat = getChat(chatId);
+  // No extraction call when the worker cannot store the result (e.g. not deployed yet).
+  if (!chat || memoryBusyChatId || !memoryStore.isAvailable()) return;
+  memoryBusyChatId = chatId;
+  if (chatId === activeChatId) { renderMemoryBar(); scrollToBottom(); }
+  try {
+    const { saved, resolved } = await memoryStore.extractFromChat(chat);
+    patchChatLocal(chatId, { memorySavedAt: Date.now(), memorySavedIds: saved.map(item => item.id) });
+    memoryBusyChatId = null;
+    if (chatId === activeChatId) { renderMemoryBar(saved); scrollToBottom(); }
+    const doneNote = resolved.length ? ` · ${resolved.length} marcado(s) como hecho` : '';
+    showToast(`Memoria: ${saved.length} ítem(s) guardado(s)${doneNote}`, false);
+  } catch (err) {
+    memoryBusyChatId = null;
+    if (chatId === activeChatId) renderMemoryBar();
+    showToast('No se pudo guardar la memoria: ' + err.message);
+  }
+}
+
+memoryBtn.style.display = memoryStore.isAvailable() ? '' : 'none';
+memoryBtn.addEventListener('click', () => memoryStore.open(activeChatId));
+
+function addMessageDOM(role, text, isAudio = false, audioDur = null, by = '') {
   const es = messagesEl.querySelector('.empty-state');
   if (es) es.remove();
 
@@ -694,7 +795,7 @@ function addMessageDOM(role, text, isAudio = false, audioDur = null) {
   labelRow.className = 'message-label-row';
   const label  = document.createElement('div');
   label.className = 'message-label';
-  label.textContent = role === 'user' ? 'Tú' : (localStorage.getItem('lastResponseProvider') || 'IA');
+  label.textContent = role === 'user' ? 'Tú' : (by || 'IA');
   labelRow.appendChild(label);
 
   if (role === 'model' && text) {
@@ -747,7 +848,7 @@ function addThinkingDOM() {
   wrap.className = 'message model thinking';
   const label  = document.createElement('div');
   label.className = 'message-label';
-  label.textContent = localStorage.getItem('selectedModel')?.startsWith('pipeline:') ? 'Whisper + IA' : 'Gemini';
+  label.textContent = currentProviderLabel();
   const bubble = document.createElement('div');
   bubble.className = 'message-bubble';
   bubble.innerHTML = `Pensando <span class="dots"><span></span><span></span><span></span></span>`;
@@ -777,9 +878,11 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
     userMsg.text = text;
     textInput.value = '';
     textInput.style.height = 'auto';
+    syncComposer();
   }
   chat.messages.push(userMsg);
   updateChat(activeChatId, { messages: chat.messages });
+  messagesEl.querySelector('.memory-bar')?.remove();
   addMessageDOM('user', userMsg.text || null, userMsg.isAudio || false, userMsg.audioDur || null);
 
   // Auto-name from first user text
@@ -794,17 +897,16 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
   const thinking = addThinkingDOM();
 
   try {
-    const selectedModel = localStorage.getItem('selectedModel') || 'pipeline:deepseek/deepseek-v4.1-flash';
     const voiceMode = window.VoiceModes?.getMode() || 'long-talk';
-    const isPipeline = selectedModel.startsWith('pipeline:');
+    // Every provider goes through /pipeline; settings.js adds provider, model and that provider's key.
     const body = {
       sessionId: activeChatId,
       systemPrompt: chat.systemPrompt || '',
-      model: isPipeline ? selectedModel.slice('pipeline:'.length) : selectedModel,
-      groqApiKey: localStorage.getItem('groqApiKey') || '',
-      openrouterApiKey: localStorage.getItem('openrouterApiKey') || '',
+      ...window.VoiceSettings.requestFields({ withStt: !!audioBase64 }),
     };
-    if (voiceMode === 'web' && isPipeline) body.webSearch = true;
+    if (voiceMode === 'web') body.webSearch = true;
+    body.memory = memoryStore.forChat(chat);
+    body.profile = memoryStore.profileText();
     if (text) body.message = text;
     if (audioBase64) {
       body.audioBase64 = audioBase64;
@@ -812,8 +914,8 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
       body.audioDuration = audioDur || 0;
     }
 
-    localStorage.setItem('lastResponseProvider', isPipeline ? 'Whisper + IA' : (selectedModel.split(':')[0] === 'openrouter' ? 'OpenRouter' : 'Gemini'));
-    const res  = await fetch(isPipeline ? '/pipeline' : '/chat', {
+    localStorage.setItem('lastResponseProvider', currentProviderLabel());
+    const res  = await fetch('/pipeline', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -821,14 +923,14 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
     const data = await res.json();
     thinking.remove();
 
-    if (!res.ok) { showToast(data.error || 'Error procesando el mensaje'); return; }
+    if (!res.ok) { showToast(data.error || 'Error procesando el mensaje'); renderMemoryBar(); return; }
 
-    if (data.provider) {
-      const modelName = data.provider.model ? ` (${data.provider.model})` : '';
-      localStorage.setItem('lastResponseProvider', `${data.provider.completion}${modelName}`);
+    if (data.provider?.model) {
+      const label = window.VoiceSettings?.modelLabel(data.provider.llmProvider || 'openrouter', data.provider.model);
+      localStorage.setItem('lastResponseProvider', label || data.provider.model);
     }
 
-    if (isPipeline && data.transcript && audioBase64) {
+    if (data.transcript && audioBase64) {
       userMsg.text = data.transcript;
       updateChat(activeChatId, { messages: chat.messages });
       const userMessages = messagesEl.querySelectorAll('.message.user');
@@ -842,11 +944,18 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
       }
     }
 
-    const modelMsg = { role: 'model', text: data.reply, ts: Date.now() };
+    const modelMsg = { role: 'model', text: data.reply, ts: Date.now(), by: localStorage.getItem('lastResponseProvider') || '' };
     chat.messages.push(modelMsg);
     updateChat(activeChatId, { messages: chat.messages });
-    const msgEl = addMessageDOM('model', data.reply);
+    // Freeze the memory the server picked on the first turn for the rest of this chat.
+    if (!Array.isArray(chat.memoryIds) && body.memory?.length && Array.isArray(data.memory?.ids)) {
+      chat.memoryIds = data.memory.ids;
+      patchChatLocal(chat.id, { memoryIds: chat.memoryIds });
+    }
+    const msgEl = addMessageDOM('model', data.reply, false, null, modelMsg.by);
+    renderMemoryBar();
     scrollToBottom();
+    if (data.closeCommand) rememberChat(chat.id);
     // Auto-TTS if enabled
     if (autoTts && data.reply) {
       const ttsBtn = msgEl?.querySelector('.btn-tts');
@@ -855,6 +964,7 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
 
   } catch (err) {
     thinking.remove();
+    renderMemoryBar();
     showToast('Error de conexión: ' + err.message);
   }
 }
@@ -896,6 +1006,7 @@ clearHistBtn.addEventListener('click', async () => {
   const chat = getChat(activeChatId);
   if (!chat) return;
   updateChat(activeChatId, { messages: [] });
+  patchChatLocal(activeChatId, { memoryIds: undefined, memorySavedAt: undefined, memorySavedIds: undefined });
   await fetch('/clear', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -968,9 +1079,15 @@ deleteFolderBtn.addEventListener('click', () => {
 // ═══════════════════════════════════════════════
 //  TEXT INPUT
 // ═══════════════════════════════════════════════
+// One round button: microphone while the box is empty, send once there is text.
+const inputBarEl = textInput.closest('.input-bar');
+function syncComposer() {
+  inputBarEl?.classList.toggle('has-text', textInput.value.trim().length > 0);
+}
 textInput.addEventListener('input', () => {
   textInput.style.height = 'auto';
-  textInput.style.height = Math.min(textInput.scrollHeight, 120) + 'px';
+  textInput.style.height = Math.min(textInput.scrollHeight, 140) + 'px';
+  syncComposer();
 });
 textInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(textInput.value.trim()); }
@@ -1008,7 +1125,9 @@ let cachedStream       = null;
 const MAX_RECORDING_SECONDS = 90;
 
 function warmMic() {
-  if (cachedStream) return;
+  // The long recorder opens and releases its own stream; keeping one warm would leave
+  // the phone's microphone indicator on for the whole session.
+  if (cachedStream || isLongMode()) return;
   navigator.mediaDevices.getUserMedia({ audio: true }).then(s => { cachedStream = s; }).catch(() => {});
 }
 document.addEventListener('pointerdown', warmMic, { once: true, capture: true });
@@ -1230,9 +1349,8 @@ const longRecorder = (window.VoiceLongRecord || {}).createLongRecorder({
   onSend: (text) => sendMessage(text),
 });
 function isLongMode() {
-  const mode = window.VoiceModes?.getMode();
-  if (mode) return mode === 'long-talk' || mode === 'web';
-  return (localStorage.getItem('selectedModel') || DEFAULT_MODEL).startsWith('pipeline:');
+  const mode = window.VoiceModes?.getMode() || 'long-talk';
+  return mode === 'long-talk' || mode === 'web';
 }
 let longJustStarted = false;
 
@@ -1428,6 +1546,11 @@ ttsAutoBtn.addEventListener('click', () => {
   updateTtsAutoBtn();
   if (!autoTts) { if (tts.speaking) tts.cancel(); if (activeTtsAudio) activeTtsAudio.pause(); }
 });
+// The settings sheet can also toggle auto-voice.
+window.addEventListener('voice-settings-change', () => {
+  autoTts = localStorage.getItem('autoTts') === 'true';
+  updateTtsAutoBtn();
+});
 
 // Stop TTS when switching chats
 function ttsStop() {
@@ -1501,146 +1624,7 @@ if (syncPullBtn) syncPullBtn.addEventListener('click', async () => {
   }
 });
 
-// ── Global settings modal (model selector) ──
-const DEFAULT_MODEL = 'pipeline:deepseek/deepseek-v4.1-flash';
-const BUILTIN_MODELS = [
-  { value: 'google:gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite', tag: 'Google' },
-  { value: 'openrouter:google/gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite', tag: 'OpenRouter' },
-  { value: 'openrouter:google/gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', tag: 'OpenRouter' },
-  { value: 'openrouter:google/gemini-3-flash-preview', name: 'Gemini 3 Flash', tag: 'OpenRouter' },
-  { value: 'pipeline:deepseek/deepseek-v4.1-flash', name: 'Whisper + DeepSeek V4.1 Flash (recomendado)', tag: 'Pipeline' },
-  { value: 'pipeline:anthropic/claude-sonnet-5.5', name: 'Whisper + Claude Sonnet 5.5 (máxima calidad, ~30× costo)', tag: 'Pipeline' },
-  { value: 'pipeline:z-ai/glm-5.3-flash', name: 'Whisper + GLM 5.3 Flash (rápido)', tag: 'Pipeline' },
-  { value: 'pipeline:openai/gpt-6-luna', name: 'Whisper + GPT-6 Luna', tag: 'Pipeline' },
-  { value: 'pipeline:openai/gpt-5.6-luna', name: 'Whisper + GPT-5.6 Luna (anterior)', tag: 'Pipeline' },
-];
-
-const globalSettingsBtn   = document.getElementById('globalSettingsBtn');
-const globalSettingsModal = document.getElementById('globalSettingsModal');
-const closeGlobalSettings = document.getElementById('closeGlobalSettings');
-const saveGlobalSettings  = document.getElementById('saveGlobalSettings');
-const modelOptionsEl      = document.getElementById('modelOptions');
-const addModelProvider    = document.getElementById('addModelProvider');
-const addModelId          = document.getElementById('addModelId');
-const addModelBtn         = document.getElementById('addModelBtn');
-const addModelHint        = document.getElementById('addModelHint');
-const groqApiKeyInput     = document.getElementById('groqApiKey');
-const openrouterApiKeyInput = document.getElementById('openrouterApiKey');
-const ttsVoiceInput       = document.getElementById('ttsVoice');
-
-function loadCustomModels() {
-  try { return JSON.parse(localStorage.getItem('customModels') || '[]'); } catch { return []; }
-}
-function saveCustomModels(list) {
-  localStorage.setItem('customModels', JSON.stringify(list));
-}
-
-function modelLabel(id) {
-  const bare = id.split('/').pop() || id;
-  return bare.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-}
-
-function modelAllowedForMode(value) {
-  const mode = window.VoiceModes?.getMode() || 'long-talk';
-  return mode === 'gemini' ? !value.startsWith('pipeline:') : value.startsWith('pipeline:');
-}
-
-function renderModelOptions() {
-  if (!modelOptionsEl) return;
-  const current = localStorage.getItem('selectedModel') || DEFAULT_MODEL;
-  const customs = loadCustomModels();
-   const all = [
-     ...BUILTIN_MODELS.map(m => ({ ...m, custom: false })),
-     ...customs.map(m => ({ ...m, custom: true })),
-   ].filter(m => modelAllowedForMode(m.value));
-  modelOptionsEl.innerHTML = all.map(m => `
-    <label class="model-option">
-      <input type="radio" name="aiModel" value="${m.value}" ${m.value === current ? 'checked' : ''} />
-      <span class="model-option-name">${m.name}</span>
-      <span class="model-option-tag">${m.tag}</span>
-      ${m.custom ? `<button type="button" class="model-remove" data-value="${m.value}" title="Quitar">✕</button>` : ''}
-    </label>
-  `).join('');
-}
-
-function updateAddModelHint() {
-  if (!addModelHint || !addModelProvider) return;
-  if (addModelProvider.value === 'google') {
-    addModelHint.textContent = 'Google API: ej. gemini-2.5-flash';
-    if (addModelId) addModelId.placeholder = 'gemini-2.5-flash';
-  } else if (addModelProvider.value === 'pipeline') {
-    addModelHint.textContent = 'Pipeline: modelo de texto OpenRouter, ej. openai/gpt-5.6-luna';
-    if (addModelId) addModelId.placeholder = 'openai/gpt-5.6-luna';
-  } else {
-    addModelHint.textContent = 'OpenRouter: ej. google/gemini-2.5-pro';
-    if (addModelId) addModelId.placeholder = 'google/gemini-2.5-pro';
-  }
-}
-
-function openGlobalSettings() {
-  renderModelOptions();
-  updateAddModelHint();
-  if (groqApiKeyInput) groqApiKeyInput.value = localStorage.getItem('groqApiKey') || '';
-  if (openrouterApiKeyInput) openrouterApiKeyInput.value = localStorage.getItem('openrouterApiKey') || '';
-  if (ttsVoiceInput) ttsVoiceInput.value = localStorage.getItem('ttsVoice') || DEFAULT_TTS_VOICE;
-  globalSettingsModal.classList.add('open');
-}
-
-if (globalSettingsBtn)   globalSettingsBtn.addEventListener('click', openGlobalSettings);
-if (closeGlobalSettings) closeGlobalSettings.addEventListener('click', () => globalSettingsModal.classList.remove('open'));
-if (globalSettingsModal) globalSettingsModal.addEventListener('click', (e) => { if (e.target === globalSettingsModal) globalSettingsModal.classList.remove('open'); });
-if (addModelProvider)    addModelProvider.addEventListener('change', updateAddModelHint);
-
-if (modelOptionsEl) modelOptionsEl.addEventListener('click', (e) => {
-  const btn = e.target.closest('.model-remove');
-  if (!btn) return;
-  e.preventDefault();
-  const value = btn.dataset.value;
-  saveCustomModels(loadCustomModels().filter(m => m.value !== value));
-  if (localStorage.getItem('selectedModel') === value) localStorage.setItem('selectedModel', DEFAULT_MODEL);
-  renderModelOptions();
-});
-
-if (addModelBtn) addModelBtn.addEventListener('click', () => {
-  const provider = addModelProvider?.value || 'google';
-  let id = (addModelId?.value || '').trim().replace(/^models\//, '');
-  if (!id) { showToast('Escribe el ID del modelo'); return; }
-  // Allow pasting "google:xxx" / "openrouter:xxx" or raw id
-  if (id.includes(':')) {
-    const [p, ...rest] = id.split(':');
-    id = rest.join(':');
-    if (p === 'google' || p === 'openrouter') addModelProvider.value = p;
-  }
-  const finalProvider = addModelProvider.value || provider;
-  const value = `${finalProvider}:${id}`;
-  const customs = loadCustomModels();
-  if (BUILTIN_MODELS.some(m => m.value === value) || customs.some(m => m.value === value)) {
-    showToast('Ese modelo ya está en la lista', false);
-    return;
-  }
-  customs.push({
-    value,
-    name: modelLabel(id),
-    tag: finalProvider === 'google' ? 'Google' : finalProvider === 'pipeline' ? 'Pipeline' : 'OpenRouter',
-  });
-  saveCustomModels(customs);
-  localStorage.setItem('selectedModel', value);
-  if (addModelId) addModelId.value = '';
-  renderModelOptions();
-  showToast('Modelo agregado', false);
-});
-
-if (saveGlobalSettings) saveGlobalSettings.addEventListener('click', () => {
-  const selected = globalSettingsModal.querySelector('input[name="aiModel"]:checked');
-  if (selected) {
-    if (modelAllowedForMode(selected.value)) localStorage.setItem('selectedModel', selected.value);
-    showToast('Modelo guardado', false);
-  }
-  if (groqApiKeyInput) localStorage.setItem('groqApiKey', groqApiKeyInput.value.trim());
-  if (openrouterApiKeyInput) localStorage.setItem('openrouterApiKey', openrouterApiKeyInput.value.trim());
-  if (ttsVoiceInput) localStorage.setItem('ttsVoice', ttsVoiceInput.value);
-  globalSettingsModal.classList.remove('open');
-});
+// Global settings (models, voice, keys) live in settings.js.
 
 // ── Device ID display + copy ──
 const deviceIdDisplay  = document.getElementById('deviceIdDisplay');
@@ -1716,6 +1700,7 @@ if (confirmLinkBtn) confirmLinkBtn.addEventListener('click', async () => {
 
     // 2. Pull everything from Cloudflare for this device_id (replace local store)
     const result = await syncFromCloudflare(true, true);
+    memoryStore.sync().catch((e) => console.warn('memory sync:', e.message));
 
     // 3. Switch to first chat
     const chats = allChats();

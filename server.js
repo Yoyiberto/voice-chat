@@ -2,7 +2,9 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const { runPipeline, generateConversationQuestions } = require('./lib/pipeline');
-const { transcribeAudio } = require('./lib/transcription');
+const { transcribeRequest } = require('./lib/transcription');
+const { describeProvider, keyStatus } = require('./lib/providers');
+const { extractMemory } = require('./lib/memory');
 
 const PORT = process.env.PORT || 3001;
 const DEFAULT_MODEL = 'google:gemini-3.1-flash-lite-preview';
@@ -164,6 +166,14 @@ app.post('/pipeline', async (req, res) => {
   }
 });
 
+app.post('/memory-extract', async (req, res) => {
+  try {
+    return res.json(await extractMemory({ body: req.body || {} }));
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.message || 'Memory extraction error' });
+  }
+});
+
 app.post('/conversation-questions', async (req, res) => {
   try {
     const { message, model, openrouterApiKey } = req.body || {};
@@ -173,17 +183,21 @@ app.post('/conversation-questions', async (req, res) => {
 });
 
 app.post('/transcribe', async (req, res) => {
-  const { audioBase64, audioMimeType, groqApiKey, model } = req.body || {};
+  const body = req.body || {};
   try {
-    const transcript = await transcribeAudio({
-      audioBase64,
-      audioMimeType,
-      apiKey: groqApiKey || process.env.GROQ_API_KEY,
-      model: model || process.env.GROQ_TRANSCRIPTION_MODEL,
-    });
+    const transcript = await transcribeRequest({ body, model: body.model });
     return res.json({ transcript });
   } catch (err) {
-    return res.status(err.status || 500).json({ error: err.message || 'Transcription error' });
+    return res.status(err.status || 500).json({ error: err.message || 'Transcription error', retryAfterMs: err.retryAfterMs });
+  }
+});
+
+// Settings screen: model catalog + key check for one provider.
+app.post('/models', async (req, res) => {
+  try {
+    return res.json(await describeProvider({ provider: req.body?.provider, body: req.body || {} }));
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.message || 'Models error' });
   }
 });
 
@@ -200,8 +214,9 @@ app.get('/tts', async (req, res) => {
   };
   if (!text) return res.status(400).json({ error: 'text required' });
   const MsEdgeTTS = require('msedge-tts').MsEdgeTTS;
-  const OUTPUT_FORMAT = require('msedge-tts').OUTPUT_FORMAT;
-  const chosen = OUTPUT_FORMAT[FORMATS[format] || FORMATS.webm] || OUTPUT_FORMAT.WEBM_24KHZ_16BIT_MONO_OPUS;
+  // OUTPUT_FORMAT values are these strings; indexing the enum by them was
+  // undefined, so every request silently fell back to WebM.
+  const chosen = FORMATS[format] || FORMATS.webm;
   const t = new MsEdgeTTS();
   try {
     await t.setMetadata(voice, chosen);
@@ -209,7 +224,8 @@ app.get('/tts', async (req, res) => {
     const contentType = format === 'mp3' ? 'audio/mpeg' : 'audio/webm';
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'no-store');
-    audioStream.pipe(res);
+    // pipeline ends the response on stream errors; close() drops the Edge socket.
+    require('stream').pipeline(audioStream, res, () => t.close());
   } catch (err) {
     res.status(502).json({ error: 'TTS failed: ' + err.message });
   }
@@ -224,6 +240,7 @@ app.get('/health', (req, res) => {
       openrouterConfigured: !!process.env.OPENROUTER_API_KEY,
       defaultModel: process.env.OPENROUTER_TEXT_MODEL || 'deepseek/deepseek-v4.1-flash',
     },
+    serverKeys: keyStatus(),
   });
 });
 

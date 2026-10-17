@@ -10,7 +10,8 @@
   function getMode() {
     const stored = localStorage.getItem(key);
     if (stored && MODES[stored]) return stored;
-    return (localStorage.getItem('selectedModel') || '').startsWith('pipeline:') ? 'long-talk' : 'gemini';
+    // A fresh device has no selectedModel yet: default to the main mode, not Gemini.
+    return 'long-talk';
   }
   function setMode(mode) {
     if (!MODES[mode]) return getMode();

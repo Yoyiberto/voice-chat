@@ -5,7 +5,9 @@
   "routes": [
     { "src": "/chat", "dest": "/api/chat" },
     { "src": "/pipeline", "dest": "/api/pipeline" },
+    { "src": "/memory-extract", "dest": "/api/memory-extract" },
     { "src": "/transcribe", "dest": "/api/transcribe" },
+    { "src": "/models", "dest": "/api/models" },
     { "src": "/conversation-questions", "dest": "/api/conversation-questions" },
     { "src": "/clear", "dest": "/api/clear" },
     { "src": "/tts", "dest": "/api/tts" },

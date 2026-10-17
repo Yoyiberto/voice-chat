@@ -1,3 +1,5 @@
+import providers from '../lib/providers.js';
+
 export default function handler(_req, res) {
   res.json({
     ok: true,
@@ -7,5 +9,6 @@ export default function handler(_req, res) {
       openrouterConfigured: !!process.env.OPENROUTER_API_KEY,
       defaultModel: process.env.OPENROUTER_TEXT_MODEL || 'deepseek/deepseek-v4.1-flash',
     },
+    serverKeys: providers.keyStatus(),
   });
 }

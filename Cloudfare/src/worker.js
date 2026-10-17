@@ -18,7 +18,7 @@ function corsHeaders(request, env) {
   };
 }
 
-function fail(message, status = 400) { return json({ error: message }, status); }
+function fail(message, status = 400, headers = {}) { return json({ error: message }, status, headers); }
 
 function ownerFromRequest(request, env) {
   const configured = env.D1_TEST_TOKEN;
@@ -97,6 +97,80 @@ async function put(env, table, id, owner, body) {
   return row;
 }
 
+// ── Cross-chat memory (decisions, promised steps, open questions, patterns) ──
+const MEMORY_KINDS = new Set(['decision', 'paso', 'pregunta', 'patron']);
+const MEMORY_STATUSES = new Set(['active', 'done']);
+const MEMORY_LIST_LIMIT = 300;
+
+function memoryRow(row) {
+  return { id: row.id, kind: row.kind, text: row.text, status: row.status, source_chat_id: row.source_chat_id, source_chat_name: row.source_chat_name, created_at: row.created_at, updated_at: row.updated_at };
+}
+
+function cleanDate(value) {
+  if (typeof value !== 'string' || value.length > 40 || Number.isNaN(Date.parse(value))) return null;
+  return new Date(value).toISOString();
+}
+
+async function listMemory(env, owner) {
+  const result = await env.DB.prepare(`SELECT * FROM memory_items WHERE owner_id = ? ORDER BY created_at DESC LIMIT ${MEMORY_LIST_LIMIT}`).bind(owner).all();
+  return result.results.map(memoryRow);
+}
+
+async function putMemory(env, id, owner, body) {
+  requireId(id);
+  if (!MEMORY_KINDS.has(body.kind)) throw new Error('Invalid kind');
+  const text = cleanText(String(body.text ?? '').trim(), 'text', 400);
+  if (!text) throw new Error('Invalid text');
+  const status = body.status ?? 'active';
+  if (!MEMORY_STATUSES.has(status)) throw new Error('Invalid status');
+  const sourceChatId = body.source_chat_id ? requireId(body.source_chat_id) : null;
+  const sourceChatName = cleanText(body.source_chat_name || '', 'source_chat_name', 300);
+  const timestamp = now();
+  const createdAt = cleanDate(body.created_at) || timestamp;
+  // Source and creation date are fixed at insert; edits only change kind, text and status.
+  await env.DB.prepare(`INSERT INTO memory_items (id, owner_id, kind, text, status, source_chat_id, source_chat_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, text=excluded.text, status=excluded.status, updated_at=excluded.updated_at WHERE memory_items.owner_id=excluded.owner_id`).bind(id, owner, body.kind, text, status, sourceChatId, sourceChatName, createdAt, timestamp).run();
+  const row = await env.DB.prepare('SELECT * FROM memory_items WHERE id = ? AND owner_id = ?').bind(id, owner).first();
+  if (!row) throw new Error('Invalid id');
+  return memoryRow(row);
+}
+
+async function handleMemory(request, env, owner, parts, headers) {
+  try {
+    if (request.method === 'GET' && parts.length === 1) return json({ memory: await listMemory(env, owner) }, 200, headers);
+    if (request.method === 'PUT' && parts.length === 2) return json(await putMemory(env, parts[1], owner, await readBody(request)), 200, headers);
+    if (request.method === 'DELETE' && parts.length === 2) {
+      requireId(parts[1]);
+      await env.DB.prepare('DELETE FROM memory_items WHERE id = ? AND owner_id = ?').bind(parts[1], owner).run();
+      return json({ ok: true }, 200, headers);
+    }
+    return fail('Method not allowed', 405, headers);
+  } catch (error) { return fail(error.message || 'D1 error', 400, headers); }
+}
+
+// "Contexto sobre mí": short stable profile, at most 5 lines.
+const PROFILE_MAX_CHARS = 800;
+const PROFILE_MAX_LINES = 5;
+
+async function handleProfile(request, env, owner, parts, headers) {
+  try {
+    if (parts.length !== 1) return fail('Not found', 404, headers);
+    if (request.method === 'GET') {
+      const row = await env.DB.prepare('SELECT text, updated_at FROM memory_profile WHERE owner_id = ?').bind(owner).first();
+      return json({ profile: row ? { text: row.text, updated_at: row.updated_at } : null }, 200, headers);
+    }
+    if (request.method === 'PUT') {
+      const body = await readBody(request);
+      const lines = String(body.text ?? '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      if (lines.length > PROFILE_MAX_LINES) throw new Error(`El perfil admite como máximo ${PROFILE_MAX_LINES} líneas`);
+      const text = cleanText(lines.join('\n'), 'profile', PROFILE_MAX_CHARS);
+      const timestamp = now();
+      await env.DB.prepare('INSERT INTO memory_profile (owner_id, text, updated_at) VALUES (?, ?, ?) ON CONFLICT(owner_id) DO UPDATE SET text=excluded.text, updated_at=excluded.updated_at').bind(owner, text, timestamp).run();
+      return json({ profile: { text, updated_at: timestamp } }, 200, headers);
+    }
+    return fail('Method not allowed', 405, headers);
+  } catch (error) { return fail(error.message || 'D1 error', 400, headers); }
+}
+
 export default {
   async fetch(request, env) {
     const headers = corsHeaders(request, env);
@@ -129,6 +203,8 @@ export default {
     }
 
     const parts = url.pathname.split('/').filter(Boolean);
+    if (parts[0] === 'memory') return handleMemory(request, env, owner, parts, headers);
+    if (parts[0] === 'profile') return handleProfile(request, env, owner, parts, headers);
     if (parts.length < 1 || !['chats', 'folders'].includes(parts[0])) return fail('Not found', 404);
     const table = parts[0];
     try {
@@ -149,4 +225,4 @@ export default {
   },
 };
 
-export { chatRow, folderRow, ownerFromRequest };
+export { chatRow, folderRow, memoryRow, ownerFromRequest };
