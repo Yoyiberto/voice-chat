@@ -16,10 +16,10 @@ test('close command detects short "cierra" phrases only', () => {
   }
 });
 
-test('memory block is capped at 10 items and 150 words', () => {
-  const items = Array.from({ length: 40 }, (_, i) => ({ id: `m${i}`, kind: 'decision', text: 'uno dos tres cuatro cinco seis siete ocho nueve diez once doce', created_at: iso(i) }));
+test('memory block is capped at 6 items and 100 words', () => {
+  const items = Array.from({ length: 40 }, (_, i) => ({ id: `m${i}`, kind: 'paso', text: 'uno dos tres cuatro cinco seis siete ocho nueve diez once doce', created_at: iso(i) }));
   const { block, ids } = memory.buildMemoryContext({ memory: items, query: '', now: NOW });
-  assert.ok(ids.length <= memory.MAX_BLOCK_ITEMS);
+  assert.ok(ids.length > 0 && ids.length <= memory.MAX_BLOCK_ITEMS);
   const itemWords = block.split('\n').filter((line) => line.startsWith('- [')).map((line) => line.replace(/^- \[[^\]]+\] /, '')).join(' ').split(/\s+/).length;
   assert.ok(itemWords <= memory.MAX_BLOCK_WORDS, `words=${itemWords}`);
   assert.match(block, /solo cuando aporte/);
@@ -33,9 +33,9 @@ test('memory selection prefers relevant and recent open loops, ignores bad input
     { id: 'empty', kind: 'paso', text: '   ' },
   ];
   const { block, ids } = memory.buildMemoryContext({ memory: items, query: 'Hoy pensé otra vez en el presupuesto', now: NOW });
-  assert.deepEqual(ids, ['old', 'ana']);
+  assert.deepEqual(ids, ['ana']);
   assert.match(block, /\[paso prometido, hace 7 días\] Hablar con Ana/);
-  assert.match(block, /\[patrón, hace 2 meses\]/);
+  assert.equal(memory.buildMemoryContext({ memory: items, query: 'Me disperso entre proyectos', now: NOW }).ids.join(), 'old,ana');
   assert.doesNotMatch(block, /no debe entrar/);
   assert.equal(memory.buildMemoryContext({ memory: 'nope', query: 'x' }).block, '');
 });
@@ -78,7 +78,7 @@ test('pipeline appends memory and close instruction to the system prompt', async
   });
   const system = calls[0].messages[0].content;
   assert.match(system, /^Base\n\nContexto sobre mí/);
-  assert.match(system, /Perfil:\n- Ingeniero de robótica en Lima\nMemoria reciente/);
+  assert.match(system, /Perfil:\n- Ingeniero de robótica en Lima\nMemoria relacionada/);
   assert.match(system, /\[paso prometido, hoy\] Hablar con Ana/);
   assert.match(system, /decir «cierra»/);
   assert.equal(result.closeCommand, true);
@@ -99,7 +99,7 @@ test('profile is capped at 5 lines / 80 words and can stand alone', () => {
   assert.deepEqual(ids, []);
   assert.match(block, /^Contexto sobre mí/);
   assert.match(block, /Perfil:\n- Prefiere respuestas cortas$/);
-  assert.doesNotMatch(block, /Memoria reciente/);
+  assert.doesNotMatch(block, /Memoria relacionada/);
   assert.equal(memory.buildMemoryContext({ memory: [{ id: 'x', kind: 'paso', text: 'Hecho ya', status: 'done' }], profile: '' }).block, '');
 });
 
@@ -139,4 +139,22 @@ test('import mode uses the fixed model and bounded input', async () => {
   assert.ok(calls[0].messages[1].content.length < 21_000);
   assert.deepEqual(result.profile, ['Ingeniero en Lima']);
   await assert.rejects(memory.extractMemory({ body: { mode: 'import', text: '  ' }, env: { OPENROUTER_API_KEY: 'k' }, fetchImpl }), /No hay texto/);
+});
+
+test('imported goals stay out unless the message touches them', () => {
+  const items = [
+    { id: 'b2', kind: 'paso', text: 'Obtener certificación oficial de francés B2 para el CV', created_at: iso(1), origin: 'import' },
+    { id: 'phd', kind: 'decision', text: 'Empezar un doctorado como base para empresas de robótica', created_at: iso(1), origin: 'import' },
+  ];
+  assert.deepEqual(memory.buildMemoryContext({ memory: items, query: 'Dudo entre dos suscripciones de 20 o una de 100', now: NOW }).ids, []);
+  const { block, ids } = memory.buildMemoryContext({ memory: items, query: 'Tengo que preparar el certificado de francés', now: NOW });
+  assert.deepEqual(ids, ['b2']);
+  assert.match(block, /\[objetivo de fondo\] Obtener certificación/);
+  assert.doesNotMatch(block, /\[paso prometido/);
+});
+
+test('a pinned pick from the first turn is not filtered again', () => {
+  const items = [{ id: 'phd', kind: 'decision', text: 'Empezar un doctorado en robótica', created_at: iso(3), origin: 'import' }];
+  assert.deepEqual(memory.buildMemoryContext({ memory: items, query: 'otra cosa distinta', now: NOW }).ids, []);
+  assert.deepEqual(memory.buildMemoryContext({ memory: items, query: 'otra cosa distinta', pinned: true, now: NOW }).ids, ['phd']);
 });

@@ -906,6 +906,7 @@ async function sendMessage(text, audioBase64, audioMimeType, audioDur) {
     };
     if (voiceMode === 'web') body.webSearch = true;
     body.memory = memoryStore.forChat(chat);
+    body.memoryPinned = Array.isArray(chat.memoryIds);
     body.profile = memoryStore.profileText();
     if (text) body.message = text;
     if (audioBase64) {

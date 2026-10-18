@@ -78,7 +78,10 @@
       return Object.values(cache).sort((a, b) => b.created_at.localeCompare(a.created_at));
     }
     function active() { return list().filter((item) => item.status === 'active'); }
-    function toPrompt(item) { return { id: item.id, kind: item.kind, text: item.text, created_at: item.created_at }; }
+    function toPrompt(item) {
+      const origin = String(item.source_chat_name || '').startsWith('importado') ? 'import' : 'chat';
+      return { id: item.id, kind: item.kind, text: item.text, created_at: item.created_at, origin };
+    }
 
     // First turn of a chat: send every active item and let the server pick ≤10 by
     // relevance. Later turns resend that same pick, so the system prompt (and the
