@@ -112,7 +112,7 @@ app.post('/chat', async (req, res) => {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${key}`,
           'HTTP-Referer': 'http://localhost:3001',
-          'X-Title': 'Voice Chat'
+          'X-Title': 'Parlo'
         },
         body: JSON.stringify({
           model: modelId, messages, temperature: 1, max_tokens: 2048,
@@ -245,7 +245,7 @@ app.get('/health', (req, res) => {
 });
 
 if (require.main === module) app.listen(PORT, () => {
-  console.log(`Voice chat at http://localhost:${PORT}`);
+  console.log(`Parlo at http://localhost:${PORT}`);
   if (!process.env.GEMINI_API_KEY) console.warn('WARNING: GEMINI_API_KEY not set');
   if (!process.env.OPENROUTER_API_KEY) console.warn('WARNING: OPENROUTER_API_KEY not set');
   if (!process.env.GROQ_API_KEY) console.warn('WARNING: GROQ_API_KEY not set (needed for audio pipeline)');

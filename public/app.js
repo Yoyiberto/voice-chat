@@ -690,7 +690,7 @@ function renderMessages() {
   if (!chat || chat.messages.length === 0) {
     const es = document.createElement('div');
     es.className = 'empty-state';
-    es.textContent = 'Presiona el micrófono para hablar o escribe un mensaje';
+    es.textContent = 'Habla con Parlo: toca el micrófono o escribe un mensaje';
     messagesEl.appendChild(es);
     return;
   }

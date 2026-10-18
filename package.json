@@ -1,7 +1,7 @@
 {
-  "name": "voice-chat",
+  "name": "parlo",
   "version": "1.0.0",
-  "description": "Voice chat app using Gemini multimodal API",
+  "description": "Parlo: voice-first reflection chat (speech-to-text + LLM + voice replies)",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",

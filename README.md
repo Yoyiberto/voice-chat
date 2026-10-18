@@ -1,4 +1,6 @@
-# voice-chat-ai
+# Parlo
+
+Parlo (formerly voice-chat-ai) is a voice-first reflection chat.
 Usually, live audio AIs are too clumsy. You can’t really have an insightful or reflective conversation with them.
 
 However, they are great for audio dumps. You can mix in words from other languages or use complex vocabulary, and they still understand context well.

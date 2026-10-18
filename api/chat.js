@@ -128,7 +128,7 @@ export default async function handler(req, res) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
           'HTTP-Referer': 'https://voice-chat-r8jv.vercel.app',
-          'X-Title': 'Voice Chat'
+          'X-Title': 'Parlo'
         },
         body: JSON.stringify({
           model: modelId,
